@@ -1,0 +1,5 @@
+https://github.com/BY571/QR-DQN/blob/master/QR-DQN.ipynb
+
+https://github.com/zpschang/MD3QN/blob/main/dopamine/agents/implicit_quantile/implicit_quantile_agent.py
+
+https://github.com/thu-ml/tianshou/blob/master/tianshou/algorithm/modelfree/qrdqn.py

@@ -1,0 +1,56 @@
+iqn_execution/
+│
+├── configs/
+│   ├── sim_config.yaml          # simulated env hyperparams
+│   ├── real_config.yaml         # LOBSTER env hyperparams
+│   └── agent_config.yaml        # IQN / training hyperparams
+│
+├── envs/
+│   ├── __init__.py
+│   ├── base_env.py              # abstract base class
+│   ├── simulated_env.py         # AC + regime-switching sim
+│   └── lobster_env.py           # real LOB environment
+│
+├── agents/
+│   ├── __init__.py
+│   ├── base_agent.py            # abstract base class
+│   ├── iqn_agent.py             # IQN-neutral + IQN-CVaR (one class, τ controls risk)
+│   └── baselines.py             # TWAP, AC, DDQN
+│
+├── networks/
+│   ├── __init__.py
+│   └── iqn_network.py           # quantile embedding + MLP
+│
+├── data/
+│   ├── raw/                     # LOBSTER raw files (gitignored)
+│   ├── processed/               # preprocessed parquet files
+│   └── loader.py                # LOBSTER loading + processing
+│
+├── training/
+│   ├── __init__.py
+│   ├── trainer.py               # training loop
+│   ├── replay_buffer.py         # experience replay
+│   └── scheduler.py             # epsilon decay, lr schedule
+│
+├── evaluation/
+│   ├── __init__.py
+│   ├── metrics.py               # IS, CVaR, Var, GL ratio, frontier
+│   └── visualizer.py            # all plots
+│
+├── experiments/
+│   ├── run_simulation.py        # Phase 1: sim experiments
+│   └── run_lobster.py           # Phase 2: real data experiments
+│
+├── results/                     # auto-generated, gitignored
+│   ├── checkpoints/
+│   ├── logs/
+│   └── figures/
+│
+├── tests/
+│   ├── test_env.py
+│   ├── test_agent.py
+│   └── test_metrics.py
+│
+├── requirements.txt
+├── README.md
+└── .gitignore
