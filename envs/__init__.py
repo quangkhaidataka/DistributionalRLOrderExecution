@@ -12,6 +12,9 @@ Usage:
 from envs.base_env        import BaseExecutionEnv, EnvConfig, ACTION_FRACS, N_ACTIONS
 from envs.simulated_env   import AlmgrenChrissEnv, RegimeSwitchingEnv, SimConfig
 from envs.lobster_env     import LobsterEnv, LobsterConfig, LOBSTERLoader
+from envs.simulated_env import JumpDiffusionEnv
+# Add to imports:
+from envs.simulated_env import MeanRevertingEnv
 
 __all__ = [
     # Base

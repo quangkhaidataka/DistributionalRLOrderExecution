@@ -35,7 +35,7 @@ class EnvConfig:
         - IDE autocomplete
     """
     # Execution horizon
-    N: int   = 10       # number of decision periods
+    N: int   = 5       # number of decision periods
     T: float = 60.0     # total horizon in minutes
 
     # Inventory
@@ -45,8 +45,8 @@ class EnvConfig:
     # Market impact (used by simulated envs)
     eta: float   = 2.5e-6   # temporary impact coefficient
     gamma: float = 2.5e-7   # permanent impact coefficient
-    a: float     = 0.1      # quadratic penalty coefficient
-
+    a: float     = 0.001      # quadratic penalty coefficient
+    penalty_type: str = 'quadratic' 
     # Volatility
     sigma: float = 0.00095  # per-period volatility
 
@@ -54,7 +54,7 @@ class EnvConfig:
     discount: float = 0.99
 
     # Realized vol window (for state feature σ̂_t)
-    rv_window: int = 5
+    # rv_window: int = 5
 
     @property
     def dt(self) -> float:
@@ -68,7 +68,10 @@ class EnvConfig:
 
 # Global action set: fractions of remaining inventory to execute.
 # Index 0 = wait, Index 4 = liquidate everything now.
-ACTION_FRACS = np.array([0.0, 0.25, 0.50, 0.75, 1.0], dtype=np.float32)
+# ACTION_FRACS = np.array([0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], dtype=np.float32)
+ACTION_FRACS = np.array([0.0, 0.2, 0.4, 0.6, 0.8, 1.0], dtype=np.float32)
+
+
 N_ACTIONS    = len(ACTION_FRACS)
 
 
@@ -98,7 +101,7 @@ class BaseExecutionEnv(ABC):
         _get_lob_features()→ Tuple[float, float]   (spread, imbalance)
     """
 
-    STATE_DIM  = 6
+    STATE_DIM  = None
     N_ACTIONS  = N_ACTIONS
 
     def __init__(self, config: EnvConfig):
@@ -111,6 +114,10 @@ class BaseExecutionEnv(ABC):
         self.p              : float = 0.0
         self._price_history : list  = []
         self._total_revenue : float = 0.0
+
+        if BaseExecutionEnv.STATE_DIM is None:
+            BaseExecutionEnv.STATE_DIM = len(self.reset())
+            self.t = 0  # reset side effects
 
     # ------------------------------------------------------------------
     # Public interface (used by training loop and evaluation)
@@ -207,11 +214,18 @@ class BaseExecutionEnv(ABC):
 
     def _compute_reward(self, x_t: float, p_exec: float) -> float:
         """
-        Normalized IS contribution for this period.
-        r_t = x_t * (p_exec - p0) / (p0 * q0)
-        Maximizing reward ≡ minimizing IS.
+        r_t = x_t*(p_exec - p0)/(p0*q0) - penalty
+        penalty = a*(x_t/q0)^2  if quadratic
+        penalty = a*(x_t/q0)    if linear
         """
-        return (x_t * (p_exec - self.cfg.p0)) / (self.cfg.p0 * self.cfg.q0)
+        is_contribution = (x_t * (p_exec - self.cfg.p0)) / (self.cfg.p0 * self.cfg.q0)
+        frac = x_t / self.cfg.q0
+        if self.cfg.penalty_type == 'linear':
+            trade_penalty = self.cfg.a * frac
+        else:
+            trade_penalty = self.cfg.a * frac ** 2
+        return is_contribution - trade_penalty
+
 
     def _compute_is(self) -> float:
         """
@@ -222,20 +236,20 @@ class BaseExecutionEnv(ABC):
         benchmark_revenue = self.cfg.p0 * self.cfg.q0
         return (benchmark_revenue - self._total_revenue) / benchmark_revenue
 
-    def _realized_vol(self) -> float:
-        """
-        Rolling realized volatility over last rv_window periods.
-        Normalized by long-run sigma so feature is O(1).
-        This is the agent's signal about the hidden volatility regime.
-        """
-        w = self.cfg.rv_window
-        if len(self._price_history) < 2:
-            return 1.0   # prior: assume normal regime
-        recent  = self._price_history[-w:]
-        returns = np.diff(recent) / (recent[0] + 1e-8)
-        rv      = float(np.std(returns))
-        # Normalize by long-run sigma
-        return rv / (self.cfg.sigma + 1e-8)
+    # def _realized_vol(self) -> float:
+    #     """
+    #     Rolling realized volatility over last rv_window periods.
+    #     Normalized by long-run sigma so feature is O(1).
+    #     This is the agent's signal about the hidden volatility regime.
+    #     """
+    #     w = self.cfg.rv_window
+    #     if len(self._price_history) < 2:
+    #         return 1.0   # prior: assume normal regime
+    #     recent  = self._price_history[-w:]
+    #     returns = np.diff(recent) / (recent[0] + 1e-8)
+    #     rv      = float(np.std(returns))
+    #     # Normalize by long-run sigma
+    #     return rv / (self.cfg.sigma + 1e-8)
 
     def _build_state(self) -> np.ndarray:
         """
@@ -249,10 +263,10 @@ class BaseExecutionEnv(ABC):
         dp_norm   = (self.p - self.cfg.p0) / (self.cfg.p0 + 1e-8)
         spd_norm  = spread / (self.cfg.p0 + 1e-8)
         imb_norm  = float(np.clip(imbalance, -1.0, 1.0))
-        rv_norm   = float(np.clip(self._realized_vol(), 0.0, 5.0))
+        # rv_norm   = float(np.clip(self._realized_vol(), 0.0, 5.0))
 
         return np.array(
-            [t_norm, q_norm, dp_norm, spd_norm, imb_norm, rv_norm],
+            [t_norm, q_norm, dp_norm, spd_norm, imb_norm],
             dtype=np.float32,
         )
 

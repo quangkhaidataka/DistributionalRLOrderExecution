@@ -1,0 +1,147 @@
+# =============================================================================
+# real_config.yaml
+# =============================================================================
+# LOBSTER LOB data environment hyperparameters for Phase 2 experiments.
+#
+# This file configures the LobsterEnv, which replays historical
+# limit order book snapshots from the LOBSTER academic dataset.
+#
+# Data source: https://lobsterdata.com
+#   - 10-level LOB reconstructed from NASDAQ ITCH messages
+#   - Message-level + orderbook-level files per stock per day
+#
+# Key design decisions:
+#   - Train/test split by YEAR to prevent look-ahead bias
+#   - Impact model (eta, gamma) kept identical to simulation
+#     for fair comparison between Phase 1 and Phase 2
+#   - Arrival price p0 is overridden each episode by the first
+#     mid-price of the trading day
+#
+# To reproduce Tables 4-5 in the paper, do not change these defaults.
+# =============================================================================
+
+
+# ---------------------------------------------------------------------------
+# Environment parameters
+# These correspond to LobsterConfig fields in envs/lobster_env.py
+# (inherits from EnvConfig in envs/base_env.py)
+# ---------------------------------------------------------------------------
+environment:
+
+  # Execution horizon
+  #   30 periods × 2 min = 60 min total
+  #   Finer granularity than simulation (N=10) because real LOB data
+  #   provides richer intraday dynamics at higher frequency
+  N: 5                     # number of decision periods
+  T: 60.0                   # total horizon in minutes
+
+  # Inventory
+  q0: 50000                 # shares to liquidate (smaller than sim for realism)
+  p0: 150.0                 # nominal arrival price (overridden by data each episode)
+
+  # Market impact model (same as simulation for comparability)
+  eta: 2.5e-6               # temporary impact coefficient
+  gamma: 2.5e-7             # permanent impact coefficient
+  a: 0.1                    # quadratic penalty coefficient
+
+  # Volatility (baseline; overridden by realised vol from data)
+  sigma: 0.001              # per-period vol (nominal, data-driven in practice)
+
+  # MDP parameters
+  discount: 0.99            # Bellman discount factor
+  rv_window: 5              # rolling window for σ̂_t feature
+
+
+# ---------------------------------------------------------------------------
+# LOBSTER data configuration
+# ---------------------------------------------------------------------------
+data:
+
+  data_dir: "data/processed"          # preprocessed parquet directory
+  stock: "AAPL"                       # stock ticker
+
+  # Train/test split (by year, no data leakage)
+  #   Training: 2019-2021 (756 trading days ≈ 756 episodes)
+  #   Testing:  2022      (252 trading days ≈ 252 episodes)
+  train_years: [2019, 2020, 2021]
+  test_years:  [2022]
+
+  # LOB depth and resampling
+  lob_levels: 5                       # levels of LOB to use (max 10)
+  resample_freq: "1min"               # LOB snapshot frequency
+                                      # 1min × 390 min/day ≈ 390 snapshots/day
+
+
+# ---------------------------------------------------------------------------
+# Walk-forward validation splits (optional, --walk-forward mode)
+# ---------------------------------------------------------------------------
+walk_forward:
+
+  # Expanding window: train on years[:k], test on years[k]
+  #   Fold 1: train=[2019],           test=2020
+  #   Fold 2: train=[2019,2020],      test=2021
+  #   Fold 3: train=[2019,2020,2021], test=2022
+  all_years: [2019, 2020, 2021, 2022]
+
+
+# ---------------------------------------------------------------------------
+# Alternative stock configurations
+# ---------------------------------------------------------------------------
+# Uncomment to run on different stocks. Ensure LOBSTER data is available.
+
+# alternative_stocks:
+#   - stock: "MSFT"
+#     q0: 50000
+#     p0: 250.0
+#     train_years: [2019, 2020, 2021]
+#     test_years: [2022]
+#
+#   - stock: "INTC"
+#     q0: 80000
+#     p0: 50.0
+#     train_years: [2019, 2020, 2021]
+#     test_years: [2022]
+#
+#   - stock: "GOOG"
+#     q0: 20000
+#     p0: 2500.0
+#     train_years: [2019, 2020, 2021]
+#     test_years: [2022]
+
+
+# ---------------------------------------------------------------------------
+# Data preprocessing parameters
+# ---------------------------------------------------------------------------
+preprocessing:
+
+  raw_dir: "data/raw"                 # raw LOBSTER CSV directory
+  processed_dir: "data/processed"     # output parquet directory
+
+  # Filtering
+  market_open: "09:30"                # NYSE/NASDAQ market open (ET)
+  market_close: "16:00"               # market close (ET)
+  min_snapshots_per_day: 300          # discard days with < 300 1-min bars
+                                      # (holidays, half-days, data issues)
+
+  # Normalisation (applied during preprocessing)
+  #   Price:     relative to day's first mid-price
+  #   Spread:    as fraction of mid-price
+  #   Imbalance: (bid_vol - ask_vol) / (bid_vol + ask_vol), ∈ [-1, 1]
+  #   Volume:    z-score within each day
+
+
+# ---------------------------------------------------------------------------
+# Usage example
+# ---------------------------------------------------------------------------
+# from envs import LobsterEnv, LobsterConfig
+# import yaml
+#
+# with open('configs/real_config.yaml') as f:
+#     raw = yaml.safe_load(f)
+#
+# cfg = LobsterConfig(
+#     **raw['environment'],
+#     **raw['data'],
+# )
+# train_env = LobsterEnv(cfg, mode='train')
+# test_env  = LobsterEnv(cfg, mode='test')

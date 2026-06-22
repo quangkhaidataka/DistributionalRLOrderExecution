@@ -374,17 +374,17 @@ class DeepRLConfig:
     lr               : float = 1e-4
     gamma            : float = 0.99
     batch_size       : int   = 64
-    target_update_freq: int  = 100
+    target_update_freq: int  = 500
     grad_clip_norm   : float = 10.0
 
     # Exploration
     epsilon_start    : float = 1.0
     epsilon_end      : float = 0.01
-    epsilon_decay_steps: int = 10_000
+    epsilon_decay_steps: int = 50_000
 
     # Replay buffer
     replay_capacity  : int   = 50_000
-    replay_min_size  : int   = 1_000
+    replay_min_size  : int   = 256
 
     # Network architecture (matches IQN's for fair comparison)
     hidden_dim       : int   = 128

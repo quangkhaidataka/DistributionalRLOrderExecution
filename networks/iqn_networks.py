@@ -53,7 +53,7 @@ class NetworkConfig:
     not 84×84 pixels — a large Atari-style network would
     massively overfit on tabular financial features.
     """
-    state_dim        : int   = 6      # our MDP state dimension
+    state_dim        : int   = 5      # our MDP state dimension
     n_actions        : int   = 5      # {0%, 25%, 50%, 75%, 100%}
     hidden_dim       : int   = 128    # embedding dimension d
     cos_embedding_dim: int   = 64     # n in cosine embedding (paper uses 64)
@@ -96,7 +96,7 @@ class CosineQuantileEmbedding(nn.Module):
 
         # Precompute i = [1, 2, ..., n] — used in cos(π·i·τ)
         # Register as buffer so it moves to GPU automatically
-        i_vals = torch.arange(1, cos_embedding_dim + 1, dtype=torch.float32)
+        i_vals = torch.arange(0, cos_embedding_dim, dtype=torch.float32)
         self.register_buffer('i_vals', i_vals)  # shape: (n,)
 
     def forward(self, tau: torch.Tensor) -> torch.Tensor:
@@ -283,7 +283,7 @@ class IQNNetwork(nn.Module):
 
         # ── Step 2: Sample τ values ───────────────────────────────────
         # tau: (B*N, 1)  all τ values for this batch
-        tau = torch.FloatTensor(B * N, 1).uniform_(tau_low, tau_high).to(device)
+        tau = torch.rand(B * N, 1, device=device) * (tau_high - tau_low) + tau_low
 
         # ── Step 3: Compute cosine quantile embedding ─────────────────
         # phi: (B*N, d)

@@ -1,0 +1,223 @@
+# =============================================================================
+# agent_config.yaml
+# =============================================================================
+# Hyperparameters for all agents and the training loop.
+#
+# Design principle: ALL learned agents (DQN, DDQN, QR-DQN, IQN) share
+# identical training hyperparameters (lr, batch_size, buffer, network size).
+# The ONLY differences between them are the loss function and architecture.
+# This ensures any performance difference in the paper is attributable to
+# the algorithm, not the training setup.
+#
+# Sections:
+#   1. iqn         — IQN-specific (quantile sampling, cosine embedding)
+#   2. baselines   — DQN/DDQN/QR-DQN + rule-based (TWAP, AC)
+#   3. shared      — parameters shared across ALL learned agents
+#   4. training    — Trainer loop configuration
+#   5. scheduling  — epsilon decay and learning rate schedules
+#
+# To reproduce the paper's results, do not change sections 1-3.
+# Section 4-5 can be adjusted for compute budget.
+# =============================================================================
+
+
+# ---------------------------------------------------------------------------
+# 1. IQN agent (our contribution)
+#    Corresponds to AgentConfig in agents/iqn_agent.py
+# ---------------------------------------------------------------------------
+iqn:
+
+  # Risk profile
+  #   cvar_alpha = 1.0  → IQN-neutral  (τ ~ U[0,1] at inference)
+  #   cvar_alpha = 0.95 → IQN-CVaR₉₅   (τ ~ U[0,0.95] at inference)
+  #   cvar_alpha = 0.90 → IQN-CVaR₉₀   (τ ~ U[0,0.90] at inference)
+  #
+  # Key insight: ALL variants share the SAME trained weights.
+  # Training always uses τ ~ U[0,1] (risk-neutral).
+  # CVaR control is FREE at inference time by restricting τ range.
+  cvar_alphas: [1.0, 0.95, 0.90]
+
+  # Quantile sampling (from Dabney et al. 2018, Table 1)
+  #   N (train):  number of τ samples per gradient step
+  #   N' (target): number of τ samples for TD target computation
+  #   K (policy):  number of τ samples for greedy action selection
+  #
+  # Paper uses N=N'=8 for efficiency, K=32 for smoother action values.
+  # Increasing K improves action selection accuracy at inference
+  # without affecting training cost.
+  n_tau_samples: 8          # N  — τ samples for online network loss
+  n_tau_targets: 8          # N' — τ samples for target network
+  n_tau_policy: 32          # K  — τ samples for greedy action selection
+
+  # Huber loss threshold (κ in quantile Huber loss)
+  #   κ = 1.0 is the standard choice from Dabney et al. (2018).
+  #   Combines L1 (gradient = ±1 for large errors) with L2
+  #   (smooth gradient near zero). Prevents gradient explosion
+  #   from outlier financial rewards.
+  huber_kappa: 1.0
+
+  # Cosine embedding dimension
+  #   Maps continuous τ ∈ [0,1] to a d-dimensional embedding via:
+  #     φ(τ) = ReLU(Σ cos(i·π·τ) · w_i + b)
+  #   64 dimensions captures fine-grained quantile structure.
+  #   Matches the original IQN paper.
+  cos_embedding_dim: 64
+
+
+# ---------------------------------------------------------------------------
+# 2. Baseline agents
+#    Corresponds to DeepRLConfig in agents/baselines.py
+# ---------------------------------------------------------------------------
+baselines:
+
+  # QR-DQN specific
+  #   Number of fixed quantile midpoints: τ_i = (2i-1)/(2N), i=1,...,N
+  #   N=51 from Dabney et al. (2018) QR-DQN paper.
+  #   Must be odd to include the median τ=0.5.
+  qr_dqn_n_quantiles: 51
+
+  # Almgren-Chriss analytical baseline
+  #   Risk aversion λ controls the speed-accuracy tradeoff.
+  #   λ → 0:   risk-neutral (TWAP-like, uniform selling)
+  #   λ → ∞:   maximally risk-averse (front-loaded selling)
+  #   λ = 1e-6: mild risk aversion, close to risk-neutral.
+  ac_risk_aversion: 1.0e-6
+
+
+# ---------------------------------------------------------------------------
+# 3. Shared hyperparameters (ALL learned agents)
+#    These are identical in AgentConfig and DeepRLConfig by design.
+# ---------------------------------------------------------------------------
+shared:
+
+  # Optimiser
+  lr: 1.0e-4                # Adam learning rate
+  gamma: 0.99               # discount factor (should match env discount)
+  batch_size: 64            # minibatch size for gradient updates
+  grad_clip_norm: 10.0      # max gradient norm (prevents explosion)
+
+  # Target network
+  #   Hard update: copy online → target every N gradient steps.
+  #   100 steps ≈ every ~7 episodes (at 15 steps/episode).
+  #   Provides stable TD targets without Polyak averaging overhead.
+  target_update_freq: 500
+
+  # Exploration (ε-greedy)
+  epsilon_start: 1.0        # initial ε (100% random exploration)
+  epsilon_end: 0.01         # final ε (1% random, 99% greedy)
+  epsilon_decay_steps: 50000  # linear decay over this many gradient steps
+
+  # Replay buffer
+  #   50K transitions × ~60 bytes/transition ≈ 3 MB (fits MacBook Air)
+  #   min_size: fill 1K transitions before first gradient step
+  #   This ensures the network sees diverse initial experiences.
+  replay_capacity: 50000
+  replay_min_size: 256
+
+  # Network architecture
+  #   2-layer MLP with 128 hidden units per layer.
+#   Input: state_dim=5, Output: n_actions=6 (or quantile values)
+  #   ReLU activations, no batch norm (short episodes, small batches).
+  hidden_dim: 128
+  n_hidden_layers: 2
+
+
+# ---------------------------------------------------------------------------
+# 4. Training loop (Trainer in training/trainer.py)
+# ---------------------------------------------------------------------------
+training:
+
+  # Simulation experiments (Phase 1)
+  sim:
+    n_episodes: 15000       # total episodes per agent
+    max_steps_per_ep: 200   # safety cap (actual is ~10 for N=10)
+    eval_freq: 1000         # evaluate every N episodes
+    n_eval_episodes: 200    # episodes per mid-training evaluation
+    n_final_eval: 500       # episodes for final evaluation
+    checkpoint_freq: 5000   # save model every N episodes
+    log_freq: 100           # print progress every N episodes
+    seed: 42
+
+  # LOBSTER experiments (Phase 2)
+  real:
+    n_episodes: 20000       # more episodes for real data (noisier)
+    max_steps_per_ep: 200
+    eval_freq: 2000         # less frequent eval (episodes are more expensive)
+    n_eval_episodes: 200
+    n_final_eval: 500
+    checkpoint_freq: 5000
+    log_freq: 200
+    seed: 42
+
+  # Output directories
+  checkpoint_dir: "results/checkpoints"
+  log_dir: "results/logs"
+
+  # Early stopping
+  #   Monitor CVaR₉₅ (in bps): stop if no improvement for 5 eval rounds.
+  #   This prevents overfitting to the training environment.
+  #   Disabled by default for reproducibility (exact episode count).
+  early_stopping: false
+  patience: 5
+  monitor_metric: "CVaR_0.95_bps"
+
+
+# ---------------------------------------------------------------------------
+# 5. Scheduling (optional, in training/scheduler.py)
+# ---------------------------------------------------------------------------
+scheduling:
+
+  # Epsilon schedule override
+  #   If enabled, replaces the agent's built-in linear decay.
+  #   Strategies: 'linear', 'exponential', 'cosine'
+  epsilon:
+    enabled: false
+    strategy: "linear"      # default matches agent's built-in
+    # start/end/decay_steps are read from shared config above
+
+  # Learning rate schedule
+  #   If enabled, overrides the constant LR in Adam.
+  #   Strategies: 'constant', 'cosine_warmup', 'step_decay'
+  learning_rate:
+    enabled: false
+    strategy: "cosine_warmup"
+    warmup_steps: 1000      # linear ramp 0 → base_lr
+    min_lr: 1.0e-6          # floor LR after cosine decay
+    # For step_decay:
+    step_size: 30000        # decay every N steps
+    step_gamma: 0.5         # multiply LR by this at each decay
+
+
+# ---------------------------------------------------------------------------
+# Usage example
+# ---------------------------------------------------------------------------
+# import yaml
+# from agents.iqn_agent import IQNAgent, AgentConfig
+# from agents.baselines import DeepRLConfig
+# from training.trainer import Trainer, TrainerConfig
+#
+# with open('configs/agent_config.yaml') as f:
+#     raw = yaml.safe_load(f)
+#
+# # Build IQN agent
+# iqn_cfg = AgentConfig(
+#     cvar_alpha       = 1.0,  # or 0.95 for CVaR variant
+#     **{k: v for k, v in raw['shared'].items()
+#        if k in AgentConfig.__dataclass_fields__},
+#     **{k: v for k, v in raw['iqn'].items()
+#        if k in AgentConfig.__dataclass_fields__},
+# )
+# agent = IQNAgent(iqn_cfg, state_dim=6, n_actions=5)
+#
+# # Build baseline agents
+# rl_cfg = DeepRLConfig(
+#     **{k: v for k, v in raw['shared'].items()
+#        if k in DeepRLConfig.__dataclass_fields__},
+#     n_quantiles = raw['baselines']['qr_dqn_n_quantiles'],
+# )
+#
+# # Build trainer
+# t_raw = raw['training']['sim']
+# trainer_cfg = TrainerConfig(**t_raw)
+# trainer = Trainer(trainer_cfg)
+# log = trainer.train(agent, env, eval_env=eval_env)

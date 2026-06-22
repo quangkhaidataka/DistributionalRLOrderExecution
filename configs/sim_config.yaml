@@ -1,0 +1,92 @@
+# =============================================================================
+# sim_config.yaml
+# =============================================================================
+# Simulated environment hyperparameters for Phase 1 experiments.
+#
+# This file is the single source of truth for all simulation parameters.
+# Both AlmgrenChrissEnv and RegimeSwitchingEnv read from this file.
+#
+# Calibration source:
+#   - Market impact: Almgren et al. (2005), "Optimal execution with
+#     nonlinear impact functions and trading-enhanced risk"
+#   - Volatility: median 1-min realised vol for AAPL 2019-2021
+#   - Regime parameters: estimated from AAPL intraday vol clustering
+#
+# To reproduce Table 3 in the paper, do not change these defaults.
+# =============================================================================
+
+
+# ---------------------------------------------------------------------------
+# Shared environment parameters (inherited by both models)
+# These correspond to EnvConfig fields in envs/base_env.py
+# ---------------------------------------------------------------------------
+environment:
+
+  # Execution horizon
+  N: 5                     # number of decision periods
+  T: 60.0                   # total horizon in minutes (N periods × dt minutes)
+                            # dt = T / N = 6 minutes per period
+
+  # Inventory
+  q0: 100000                # initial shares to liquidate
+  p0: 100.0                 # arrival (benchmark) price in dollars
+
+  # Market impact model
+  #   Temporary impact:  p_exec = p_t - eta * (x_t / dt)
+  #   Permanent impact:  p_{t+1} = p_t - gamma * x_t + noise
+  eta: 2.5e-6               # temporary impact coefficient
+  gamma: 2.5e-7             # permanent impact coefficient
+  a: 0.001                    # quadratic penalty coefficient (AC formula)
+
+  # Volatility
+  sigma: 0.00095            # per-period price volatility (σ)
+                            # annualised ≈ σ × √(252 × 65) ≈ 12%
+
+  # MDP parameters
+  discount: 0.99            # γ in Bellman equation (close to 1 for 10-step horizon)
+  # rv_window: 5              # rolling window for realised vol state feature σ̂_t
+
+
+# ---------------------------------------------------------------------------
+# Regime-switching parameters (RegimeSwitchingEnv only)
+# These extend SimConfig in envs/simulated_env.py
+# ---------------------------------------------------------------------------
+regime_switching:
+
+  # Two-state hidden Markov volatility model
+  #   Normal regime:  σ_low  ≈ 0.8× baseline vol
+  #   Stress regime:  σ_high ≈ 3.0× baseline vol
+  sigma_low: 0.0005         # normal regime volatility per period
+  sigma_high: 0.008         # stress regime volatility per period
+
+  # Transition probabilities (per decision period)
+  #   P(normal → stress) = p_01 = 0.05  →  E[normal duration] = 20 periods
+  #   P(stress → normal) = p_10 = 0.30  →  E[stress duration] = 3.3 periods
+  #   Stationary distribution: P(stress) ≈ p_01/(p_01+p_10) ≈ 14%
+  p_01: 0.15                # normal → stress transition probability
+  p_10: 0.40                # stress → normal transition probability
+
+  # Simulated LOB features
+  #   Spread: modelled as proportional to volatility with additive noise
+  #   Imbalance: mean-reverting OU process (captures microstructure)
+  spread_base: 0.02         # base spread as fraction of price
+  spread_noise: 0.3         # multiplicative noise level on spread
+  imb_mean_rev: 0.5         # imbalance mean-reversion speed (OU κ)
+
+
+# ---------------------------------------------------------------------------
+# Usage example
+# ---------------------------------------------------------------------------
+# from envs import AlmgrenChrissEnv, RegimeSwitchingEnv, SimConfig
+# import yaml
+#
+# with open('configs/sim_config.yaml') as f:
+#     raw = yaml.safe_load(f)
+#
+# # Phase 1A: Almgren-Chriss
+# cfg_ac = SimConfig(**raw['environment'])
+# env_ac = AlmgrenChrissEnv(cfg_ac)
+#
+# # Phase 1B: Regime-Switching
+# cfg_rs = SimConfig(**raw['environment'], **raw['regime_switching'])
+# env_rs = RegimeSwitchingEnv(cfg_rs)

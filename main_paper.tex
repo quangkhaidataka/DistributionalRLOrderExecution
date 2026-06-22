@@ -1,0 +1,928 @@
+\documentclass[11pt]{article}
+% \documentclass[draft]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{color}
+\usepackage{hyperref}
+\usepackage{natbib}
+\usepackage{breqn}
+\usepackage{enumitem}
+\usepackage{appendix}
+\usepackage[margin=20mm]{geometry}
+\usepackage{authblk}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{subcaption}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{titlesec}
+\titlespacing*{\paragraph}{0pt}{0.5\baselineskip}{1em}
+\titleformat{\paragraph}[runin]{\normalfont\normalsize\bfseries}{}{0pt}{}
+
+\setlength{\parskip}{1em}
+\setlength{\parindent}{0em}
+
+% Theorem environments
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{remark}[theorem]{Remark}
+
+% Custom commands for consistency
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\cvar}{\operatorname{CVaR}}
+\newcommand{\var}{\operatorname{VaR}}
+\newcommand{\is}{\operatorname{IS}}
+\newcommand{\bps}{\operatorname{bps}}
+
+\title{Risk-Averse Optimal Execution via Distributional Reinforcement Learning}
+\author[1]{Khai Nguyen}
+\author[1]{Huy N. Chau}
+\affil[1]{Department of Mathematics, The University of Manchester}
+\date{\today}
+
+\begin{document}
+\maketitle
+\begin{abstract}
+We study optimal trade execution through the lens of distributional 
+reinforcement learning.  Standard reinforcement learning methods 
+optimise expected execution costs but structurally ignore
+the tail risks inherent in liquidating large positions.  We propose 
+a framework based on Implicit Quantile Networks (IQN) that learns 
+the full distribution of execution costs and enables risk-averse
+decision-making through Conditional Value-at-Risk (CVaR) policy 
+distortion.  We evaluate the framework in two settings: simulated environments 
+under both Gaussian and jump-diffusion price dynamics, and an 
+empirical study using millisecond-resolution NYSE TAQ data.  In 
+simulation, distributional RL performs comparably to all baselines 
+under thin-tailed dynamics, confirming that it introduces no 
+unnecessary complexity when tail risk is absent. Under
+jump-diffusion dynamics, it delivers substantial reductions in 
+tail risk relative to both rule-based benchmarks and standard 
+reinforcement learning agents.  On real market data, IQN with CVaR 
+distortion reduces the CVaR$_{0.95}$ of implementation shortfall 
+by 88.8\% and the worst-case shortfall by 97.0\% relative to TWAP, 
+while dominating the standard reinforcement learning baselines, DQN and DDQN, on every risk
+metric at virtually no cost to average performance.  Crucially, 
+risk-averse policies are obtained from a single trained network by 
+simply adjusting the quantile sampling range at inference time, 
+requiring no retraining.  This mechanism eliminates the vast 
+majority of tail risk with negligible increase in average 
+execution cost.
+\end{abstract}
+% \begin{abstract}
+% We study the problem of optimal trade execution through the lens of distributional reinforcement learning.  While standard reinforcement learning methods optimise expected execution cost, they fail to account for the tail risks inherent in liquidating large positions.  We propose a framework based on Implicit Quantile Networks (IQN) that learns the full distribution of execution costs and enables risk-sensitive decision-making via distortion risk measures, with a focus on Conditional Value-at-Risk (CVaR) policy distortion.  Our approach models the execution problem as a discrete-time Markov decision process with an implementation shortfall reward and applies IQN with CVaR distortion at the policy level to control downside risk without retraining.  We evaluate our framework in two settings: (i)~simulated environments under Almgren--Chriss and jump-diffusion price dynamics, and (ii)~an empirical study using millisecond-resolution NYSE TAQ data for AAPL in 2014.  Under thin-tailed Gaussian dynamics, all methods perform comparably, confirming that distributional RL does not introduce unnecessary complexity when tail risk is absent.  Under jump-diffusion dynamics, IQN-CVaR$_{0.95}$ reduces CVaR$_{0.95}$ by 55.8\% and worst-case shortfall by 64.5\% relative to TWAP, while maintaining competitive average costs.  Compared to standard RL baselines, IQN achieves 10.8\% lower CVaR$_{0.95}$ and 15.3\% lower maximum shortfall than DQN, while producing execution variance nearly half that of DDQN.  On real market data, IQN-CVaR$_{0.95}$ achieves an 88.8\% reduction in CVaR$_{0.95}$ and a 97.0\% reduction in maximum shortfall compared to TWAP, with execution volatility reduced by over $81\times$.  Among all RL agents, IQN-CVaR$_{0.95}$ dominates on every risk metric, reducing maximum shortfall by $5.2\times$ relative to DQN and $7.3\times$ relative to DDQN, at virtually no cost to average performance. Our results demonstrate that distributional reinforcement learning offers a principled and effective approach to risk-aware optimal execution.
+
+%  % Crucially, these risk-sensitive policies are derived from a single trained network by simply restricting the quantile sampling range at inference time---requiring zero retraining and providing continuous control over the cost--risk tradeoff
+% \end{abstract}
+
+\textbf{Keywords:} Optimal execution, distributional reinforcement learning, Implicit Quantile Networks, Conditional Value-at-Risk, implementation shortfall, risk-averse policy, NYSE TAQ.
+
+
+% ============================================================================
+% SECTION 4: PROBLEM FORMULATION
+% ============================================================================
+
+\section{Introduction}\label{sec:introduction}
+ 
+The liquidation of large equity positions is a fundamental challenge in institutional trading. A trader seeking to sell $q_0$ shares faces a tension between speed and patience: executing too quickly incurs excessive market impact, while executing too slowly exposes the position to adverse price movements. \citet{perold1988implementation} formalised this tradeoff through the concept of \emph{implementation shortfall}---the difference between the theoretical revenue at the decision price and the actual revenue obtained---which has since become one of the most widely used measures of execution quality in institutional trading. The seminal work of \citet{almgren2001optimal} (hereafter AC) cast the problem as a stochastic optimisation and derived closed-form optimal execution schedules that balance expected cost against execution risk under the assumption of linear market impact and Gaussian price dynamics. The AC solution is a deterministic, pre-committed trading trajectory that liquidates faster early on when the trader is more risk-averse and reduces to uniform, equal-sized execution in the risk-neutral limit. Their framework remains the dominant analytical benchmark in practice.
+ 
+However, the Almgren--Chriss model relies on strong parametric assumptions, including Gaussian returns, time-invariant impact coefficients, and a fixed risk-aversion parameter, that rarely hold in real markets. These limitations have motivated a growing body of work applying reinforcement learning (RL) to optimal execution, where the agent learns directly from market data without requiring an explicit price model. \citet{nevmyvaka2006reinforcement} conducted the first large-scale empirical application of RL to execution, demonstrating cost reductions of up to 50\% over submit-and-leave benchmarks using 1.5 years of millisecond-resolution NASDAQ limit order data. \citet{hendricks2014reinforcement} extended the Almgren--Chriss framework by training a Q-learning agent to dynamically adapt the execution schedule based on prevailing spread and volume dynamics, improving implementation shortfall by up to 10.3\% on the South African equity market for short trade horizons. \citet{moallemi2022reinforcement} formulated the child-order execution problem as an optimal stopping problem and developed both supervised and reinforcement learning approaches, demonstrating significant cost reductions on historical NASDAQ data. Most relevant to our work, \citet{ning2021double} formulated the optimal execution problem within the Almgren--Chriss framework and solved it using Double Deep Q-Networks (DDQN), demonstrating improvements over TWAP (time-weighted average price, a benchmark that splits the order into equal-sized child trades across the horizon) on seven out of nine stocks tested.
+ 
+A common thread in all of these studies is that they optimise the \emph{expected} execution cost. While this is a natural objective, it is fundamentally incomplete from a risk management perspective. Institutional traders care not only about average performance but also, critically, about \emph{tail risk}, the cost incurred in the worst execution scenarios. A strategy with low average shortfall but occasionally catastrophic outcomes is unacceptable for any risk-conscious execution desk. In quantitative risk management, Conditional Value-at-Risk (CVaR), also known as Expected Shortfall, is one of the standard measures for quantifying tail risk \citet{artzner1999coherent, mcneil2015quantitative}. Yet none of the existing RL approaches to optimal execution provide a mechanism for directly controlling CVaR or any other tail risk measure. Standard value-based methods such as Deep Q-Networks (DQN) and DDQN learn a single scalar, the expected return, and structurally ignore the shape of the return distribution. Risk-sensitive RL methods that do incorporate CVaR either require retraining for each risk level \citet{tamar2015optimizing} or involve solving an augmented-state MDP that does not scale to large state spaces \citet{chow2015risk}, making them impractical for real-time risk management where the desired risk tolerance may change throughout the trading day.
+ 
+Distributional reinforcement learning offers a principled resolution to this problem. Rather than estimating the expected return, distributional RL models the \emph{full probability distribution} of returns. \citet{bellemare2017distributional} introduced this perspective and proved that the distributional Bellman operator is a contraction in the Wasserstein metric. This result guarantees that iteratively applying the operator converges to a unique return distribution, placing distributional learning on firm theoretical ground analogous to the convergence guarantees enjoyed by classical value-based methods. \citet{dabney2018quantile} proposed Quantile Regression DQN (QR-DQN), which approximates the return distribution at fixed quantile levels using quantile regression, closing the theory--practice gap by operating end-to-end on the Wasserstein metric. \citet{dabney2018implicit} then introduced Implicit Quantile Networks (IQN), which generalise QR-DQN by learning a continuous quantile function that can be queried at \emph{any} resolution, rather than at a predetermined set of quantile points. Crucially, a trained IQN can be combined with distortion risk measures \citet{wang2000class} to produce risk-sensitive policies \emph{at inference time without any retraining}: by adjusting which portion of the learned return distribution the agent considers when choosing actions, one can shift the policy from risk-neutral to risk-averse. In particular, restricting the agent to evaluate only the lower tail of the distribution yields a policy that approximately optimises Conditional Value-at-Risk (CVaR). This property makes IQN suitable for financial execution, where the ability to adjust risk tolerance in real time, from a single pre-trained model, is of direct operational value. Throughout, we use \emph{risk-averse} for the specific tail-avoiding policies we develop via CVaR, and \emph{risk-sensitive} for the broader class of distortion-based policies of which risk aversion is one instance.
+ 
+In this paper, we bridge distributional reinforcement learning and optimal execution, providing the systematic application of distributional RL to risk-averse trade execution. Our contributions are as follows:
+\begin{itemize}
+    \item We formulate optimal execution as a distributional RL problem and apply Implicit Quantile Networks with CVaR policy distortion, enabling continuous, real-time risk control from a single trained model. We situate the CVaR mechanism within the general theory of distortion risk measures, clarifying the theoretical foundations and highlighting the generality of the approach.
+ 
+    \item We evaluate our framework in two complementary settings: (i)~simulated environments under both Almgren--Chriss Gaussian and Merton jump-diffusion price dynamics, and (ii)~an empirical study using millisecond-resolution NYSE TAQ data for AAPL. In simulation, we confirm that distributional RL does not introduce unnecessary complexity under thin-tailed Gaussian dynamics, while providing substantial tail-risk reduction under fat-tailed jump-diffusion dynamics. On real market data, IQN-CVaR$_{0.95}$ reduces CVaR$_{0.95}$ by 88.8\% relative to TWAP and dominates all other standard RL baselines on every risk metric, reducing maximum shortfall by $5.2\times$ relative to DQN and $7.3\times$ relative to DDQN.
+ 
+    \item We show that the CVaR distortion mechanism provides what we term \emph{zero-cost tail protection}: switching from risk-neutral to risk-averse execution requires no retraining, no additional computation, and incurs virtually no increase in average execution cost, while eliminating the vast majority of tail risk.
+\end{itemize}
+ 
+The remainder of this paper is organised as follows. Section~\ref{sec:problem_formulation} formulates the optimal execution problem as a finite-horizon MDP. Section~\ref{sec:methodology} presents the distributional RL methodology, including the IQN architecture and CVaR policy distortion. Section~\ref{sec:experiments} reports experimental results in both simulated and empirical settings. Section~\ref{sec:conclusion} gives the conclusions of the paper.
+ 
+
+% =============================================================================
+% SECTION 2: PROBLEM FORMULATION (Rewritten — concise style)
+% =============================================================================
+% Changes from original:
+%   - Replaced 6 x \subsection* with \paragraph{} for compact flow
+%   - Cut redundant prose that restated equations in words
+%   - Merged Implementation Shortfall and Objective into the main flow
+%   - Kept all equations and mathematical content intact
+% =============================================================================
+
+\section{Problem Formulation}\label{sec:problem_formulation}
+
+We formulate the optimal execution problem as a finite-horizon Markov decision process (MDP). A trader seeks to liquidate $q_0$ shares of a single asset over a fixed horizon of $T$ minutes, divided into $N$ discrete decision periods of length $\Delta t = T / N$. At each period $t = 0, 1, \ldots, N-1$, the agent observes the market state and decides what fraction of its remaining inventory to execute. The objective is to minimise the implementation shortfall (IS)---the difference between the theoretical benchmark revenue at the arrival price and the actual revenue obtained---while controlling for execution risk.
+\paragraph{State space.}
+At each period $t$, the agent observes a five-dimensional state vector
+\begin{equation}\label{eq:state_vector}
+    s_t = \bigl(\, t^*,\; q_t^*,\; \Delta p_t^*,\; \mathrm{spread}_t^*,\; \mathrm{imb}_t^* \,\bigr) \in \mathbb{R}^5,
+\end{equation}
+where $t^* = t/N \in [0,1]$ is the normalised time elapsed, $q_t^* = q_t/q_0 \in [0,1]$ is the fraction of inventory remaining, $\Delta p_t^* = (p_t - p_0)/p_0$ is the relative price displacement from the arrival price $p_0$, $\mathrm{spread}_t^* = \mathrm{spread}_t / p_t$ is the bid--ask spread normalised by the current mid-price, and $\mathrm{imb}_t^* \in [-1,1]$ is the order flow imbalance defined as
+\begin{equation}\label{eq:imbalance}
+    \mathrm{imb}_t = \frac{V_t^{\mathrm{buy}} - V_t^{\mathrm{sell}}}{V_t^{\mathrm{buy}} + V_t^{\mathrm{sell}} + \varepsilon},
+\end{equation}
+where $V_t^{\mathrm{buy}}$ and $V_t^{\mathrm{sell}}$ are the buy and sell volumes during period $t$, and $\varepsilon > 0$ a small constant for numerical stability. The first two components $(t^*, q_t^*)$ capture execution progress and are sufficient for the Almgren--Chriss optimal solution \citet{almgren2001optimal}; the remaining three provide real-time market microstructure information that a model-free agent can exploit to adapt its schedule to prevailing conditions.
+\paragraph{Action space.}
+We define a discrete action space
+\begin{equation}\label{eq:actions}
+    \mathcal{A} = \{a_0, a_1, \ldots, a_5\}, \quad \text{with fraction map} \quad \varphi(a_k) = 0.2k, \quad k = 0, 1, \ldots, 5.
+\end{equation}
+At period $t$, action $a_k$ executes $x_t = \varphi(a_k) \cdot q_t$ shares of the remaining inventory. The fractions \\ $\{0.0, 0.2, 0.4, 0.6, 0.8, 1.0\}$ span the range from holding to full liquidation. At the terminal period $t = N-1$, all remaining inventory is liquidated regardless of the chosen action: $x_{N-1} = q_{N-1}$.
+
+\paragraph{Execution price and market impact.}
+Following \citet{almgren2001optimal} , the execution price for selling $x_t$ shares at period $t$ is
+\begin{equation}\label{eq:exec_price}
+    \tilde{p}_t = p_t - \eta \cdot \frac{x_t}{\Delta t},
+\end{equation}
+where $p_t$ is the mid-price and $\eta > 0$ is the temporary impact coefficient. The mid-price evolves as
+\begin{equation}\label{eq:price_dynamics}
+    p_{t+1} = p_t - \gamma \cdot x_t + \sigma \sqrt{\Delta t}\, \xi_t, \quad \xi_t \overset{\mathrm{i.i.d.}}{\sim} \mathcal{N}(0,1),
+\end{equation}
+where $\gamma \geq 0$ is the permanent impact coefficient and $\sigma > 0$ is the price volatility. In the empirical setting (Section~\ref{sec:experiments}), the mid-price 
+is observed directly from the NBBO. Since the decision periods have 
+fixed length $\Delta t$, the rate-dependent impact model of 
+\citet{almgren2001optimal} simplifies to
+\begin{equation}
+\label{eq:taq_exec_price}
+    \tilde{p}_t = p_t^{\mathrm{mid}} - \eta \cdot x_t,
+\end{equation}
+where $\eta = \eta_{\mathrm{AC}} / \Delta t > 0$ absorbs the constant 
+period length into the impact coefficient.
+
+\paragraph{Reward and implementation shortfall.}
+We adopt an IS-based reward that decomposes the total execution cost into per-period contributions:
+\begin{equation}\label{eq:reward}
+    r_t = \frac{x_t \cdot (\tilde{p}_t - p_0)}{p_0 \cdot q_0} - a \left(\frac{x_t}{q_0}\right)^{\!2},
+\end{equation}
+where $p_0$ is the arrival price and $a > 0$ is a penalty coefficient. The first term measures the normalised IS contribution in basis points; the second is a quadratic trade penalty that discourages 
+concentrated execution. Quadratic penalties on trade size are 
+standard in the optimal execution literature: they arise naturally 
+from temporary impact costs in  
+\citet{almgren2001optimal}, and are employed as explicit 
+regularisers in the RL execution setting by \citet{ning2021double}. 
+We normalise by $q_0$ so that the penalty measures the fraction 
+of total inventory traded, making it scale-invariant across 
+different order sizes. The total implementation shortfall over an episode is
+\begin{equation}\label{eq:is}
+    \mathrm{IS} = \frac{p_0 \cdot q_0 - \sum_{t=0}^{N-1} x_t \cdot \tilde{p}_t}{p_0 \cdot q_0},
+\end{equation}
+expressed in basis points ($1\,\mathrm{bps} = 10^{-4}$). This is the industry-standard measure of execution quality \citet{perold1988implementation} and serves as the primary evaluation criterion in our experiments.
+
+\paragraph{Objective.}
+The risk-neutral objective is to find a policy $\pi$ maximising the expected cumulative discounted reward:
+\begin{equation}\label{eq:objective}
+    \max_\pi \; \mathbb{E}^{\pi} \!\left[ \sum_{t=0}^{N-1} \lambda^t \, r_t \right],
+\end{equation}
+where $\lambda \in (0,1]$ is a discount factor. This formulation optimises the expected execution cost but does not account for tail risk. To address this, we employ distributional RL with CVaR policy distortion, described in Section~\ref{sec:methodology}.
+
+% ============================================================================
+% SECTION 5: METHODOLOGY
+% ============================================================================
+
+% =============================================================================
+% METHODOLOGY SECTION — REWRITTEN
+% =============================================================================
+% Changes from original:
+%   1. Unified CVaR notation under risk-management convention (confidence level beta)
+%   2. Added formal distortion risk measure framework before specialising to CVaR
+%   3. Added caveat on CVaR policy optimality (time-inconsistency)
+%   4. Fixed Ma et al. (2021) citation; replaced with Chow et al. (2015) and 
+%      Majumdar & Pavone (2020) where appropriate
+%   5. Minor clarifications throughout
+% =============================================================================
+%
+% INSTRUCTIONS:
+%   - Copy this section into your main .tex file
+%   - Add the new references (marked NEW) to your .bib file or \bibitem list
+%   - Search for "% NOTE:" comments for items requiring your attention
+% =============================================================================
+
+\section{Methodology}\label{sec:methodology}
+
+In this section, we present the distributional reinforcement learning framework employed in our approach. We begin by reviewing the distributional perspective on value functions, then describe the Implicit Quantile Network (IQN) architecture that serves as the backbone of our method, and finally introduce the risk-averse policy mechanism based on distortion risk measures that enables CVaR-optimal execution without retraining.
+
+% -----------------------------------------------------------------------------
+\subsection*{Distributional Reinforcement Learning}
+% -----------------------------------------------------------------------------
+
+We begin by contrasting the standard and distributional formulations of reinforcement learning to motivate our approach.
+ 
+\paragraph{Standard reinforcement learning.}
+In the classical framework, the agent seeks to estimate the action-value function $Q^\pi$, defined as the expected cumulative discounted return under policy $\pi$:
+\begin{equation}\label{eq:action_value}
+    Q^\pi(s,a) := \mathbb{E}\bigl[Z^\pi(s,a)\bigr] 
+    = \mathbb{E}^{\pi}\!\left[\sum_{t=0}^{\infty} \lambda^t r_t \;\bigg|\; s_0 = s,\, a_0 = a\right],
+\end{equation}
+where $\mathbb{E}^{\pi}$ denotes the expectation over trajectories generated by the policy $\pi$ and the transition dynamics, and $Z^\pi(s,a) = \sum_{t=0}^{\infty} \lambda^t r_t$, with per-step reward $r_t = R(s_t, a_t)$, is the random return---a random variable whose realisation depends on the stochastic reward, transition dynamics, and the policy $\pi$. The value function satisfies Bellman's equation \citet{bellman1957dynamic}:
+\begin{equation}\label{eq:bellman_expectation}
+    Q^\pi(s,a) = \mathbb{E}^{\pi}\bigl[R(s,a)\bigr] + \lambda\, \mathbb{E}^{\pi}\bigl[Q^\pi(s', a')\bigr],
+\end{equation}
+and the corresponding optimality operator used in Q-learning is
+\begin{equation}\label{eq:bellman_optimality}
+    \mathcal{T} Q(s,a) = \mathbb{E}\bigl[R(s,a)\bigr] + \lambda\, \mathbb{E}\!\left[\max_{a' \in \mathcal{A}} Q(s', a')\right].
+\end{equation}
+Here the unsuperscripted $\mathbb{E}$ denotes the expectation over the reward and the next state $s' \sim P(\cdot \mid s, a)$ alone, since the greedy maximisation in the optimality operator $\mathcal{T}$ replaces the policy $\pi$. The optimality operator $\mathcal{T}$ is a contraction mapping, guaranteeing that iterative methods converge to the unique fixed point $Q^*$ \citet{bertsekas1996neuro}. However, a fundamental limitation of this framework is that the expectation in Eq.~\eqref{eq:action_value} discards all information about the \emph{variability} of returns---the agent has no knowledge of whether a given state-action pair yields consistently moderate returns or occasionally catastrophic ones.
+ 
+\paragraph{The distributional perspective.}
+Distributional reinforcement learning, introduced by \citet{bellemare2017distributional}, departs from this scalar summary and instead models the full probability distribution of the random return $Z^\pi(s,a)$. Rather than collapsing the return into its mean, the distributional approach preserves the complete \emph{value distribution}---including its variance, skewness, and tail behaviour.
+
+The value distribution satisfies a recursive equation analogous to the classical Bellman equation, but expressed as an equality in distribution:
+\begin{equation}\label{eq:dist_bellman}
+    Z(s,a) \overset{D}{=} R(s,a) + \gamma\, Z(S', A'),
+\end{equation}
+where $\overset{D}{=}$ denotes equality in distribution, $S' \sim P(\cdot \mid s, a)$ is the next state, and $A' \sim \pi(\cdot \mid S')$ is the next action. Eq.~\eqref{eq:dist_bellman} states that the distribution of $Z$ is characterised by the interaction of three random quantities: the reward $R$, the next state--action pair $(S', A')$, and the return at the successor state $Z(S', A')$ \citet{bellemare2017distributional}. The classical value function is recovered by taking expectations on both sides: $Q^\pi(s,a) = \mathbb{E}[Z^\pi(s,a)]$. The distributional Bellman operator $\mathcal{T}^\pi$ is the operator that maps a value distribution $Z$ to a new distribution defined by the right-hand side of Eq.~\eqref{eq:dist_bellman}:
+\begin{equation}\label{eq:dist_bellman_operator}
+    \mathcal{T}^\pi Z(s,a) \overset{D}{:=} R(s,a) + \gamma\, Z(S', A'), \quad S' \sim P(\cdot \mid s, a),\; A' \sim \pi(\cdot \mid S').
+\end{equation}
+\citet{bellemare2017distributional} showed that $\mathcal{T}^\pi$ is a $\gamma$-contraction in the maximal $p$-Wasserstein metric $\bar{d}_p$\footnote{For two distributions $\mu,\nu$ on $\mathbb{R}$, the $p$-Wasserstein distance is $W_p(\mu,\nu) = \big(\inf_{\pi \in \Pi(\mu,\nu)} \mathbb{E}_{(X,Y)\sim\pi}\,|X-Y|^p\big)^{1/p}$, where $\Pi(\mu,\nu)$ is the set of couplings with marginals $\mu$ and $\nu$; equivalently, in terms of quantile functions, $W_p(\mu,\nu) = \big(\int_0^1 |F_\mu^{-1}(\tau)-F_\nu^{-1}(\tau)|^p\,d\tau\big)^{1/p}$. The maximal form used here is $\bar{d}_p(Z_1,Z_2) = \sup_{(s,a)} W_p\big(Z_1(s,a),Z_2(s,a)\big)$.} over value distributions:
+\begin{equation}\label{eq:wasserstein_contraction}
+    \bar{d}_p(\mathcal{T}^\pi Z_1,\, \mathcal{T}^\pi Z_2) \leq \gamma\, \bar{d}_p(Z_1, Z_2),
+\end{equation}
+for any two value distributions $Z_1, Z_2$. This contraction guarantees convergence to the unique fixed point $Z^\pi$ and provides theoretical justification for distributional learning algorithms. Notably, $\mathcal{T}^\pi$ is \emph{not} a contraction in total variation, Kullback--Leibler divergence, or Kolmogorov distance \citet{bellemare2017distributional}, making the Wasserstein metric the natural choice for distributional RL.
+
+For our financial execution setting, the distributional perspective is not merely a technical refinement---it is an operational necessity. Institutional traders care deeply about the tail behaviour of execution costs: a strategy with low average cost but occasional catastrophic shortfall is unacceptable. By modelling the full distribution of $Z(s,a)$, we gain direct access to tail risk measures such as CVaR, enabling the risk-averse policies developed in Section~\ref{subsec:risk_policy}.
+
+% -----------------------------------------------------------------------------
+% =============================================================================
+\subsection*{Implicit Quantile Networks}\label{subsec:iqn}
+% =============================================================================
+ 
+A key question in distributional RL is how to \emph{represent} the value distribution. In this subsection, we describe the Implicit Quantile Network (IQN) architecture \citet{dabney2018implicit} that forms the backbone of our method, situating it within the progression of quantile-based distributional algorithms. A natural way to represent a distribution is through its quantile function. For a random variable $Z$ with cumulative distribution function $F_Z$, the quantile function is defined as
+\begin{equation}\label{eq:quantile_fn}
+    F_Z^{-1}(\tau) = \inf\{z \in \mathbb{R} : F_Z(z) \geq \tau\}, \quad \tau \in [0,1].
+\end{equation}
+Any distribution is fully characterised by its quantile function, and expectations can be recovered via $\mathbb{E}[g(Z)] = \int_0^1 g(F_Z^{-1}(\tau))\,d\tau$. This representation has a direct financial interpretation: each quantile level $\tau$ corresponds to a specific percentile of the return distribution, enabling practitioners to reason about best-case, typical, and worst-case outcomes simultaneously. \citet{dabney2018quantile} proposed Quantile Regression DQN (QR-DQN), which approximates the return distribution as a uniform mixture of $K$ Diracs and learns the quantile values at fixed, evenly spaced quantile levels $\hat{\tau}_i = (2i-1)/(2K)$ for $i = 1, \ldots, K$, using quantile regression. QR-DQN established that the combined projection and Bellman update is a contraction in the $\infty$-Wasserstein metric, closing the theory--practice gap left by C51 \citet{bellemare2017distributional}. However, QR-DQN is limited by its fixed quantile resolution: once $K$ is chosen, the network cannot allocate finer resolution to regions of the distribution that matter most---such as the tails that drive risk in financial execution.
+ 
+Implicit Quantile Networks (IQN), proposed by \citet{dabney2018implicit}, remove this limitation by learning a \emph{continuous} mapping from any quantile level $\tau \in [0,1]$ to the corresponding quantile value. Rather than committing to a fixed set of quantile targets, IQN treats $\tau$ as an input to the network and can be queried at arbitrary resolution. This is the key architectural innovation that enables our risk-averse execution framework: because IQN learns the entire quantile function, we can later restrict the sampling range of $\tau$ to focus on tail quantiles for CVaR-based decision-making.
+ 
+\paragraph{Architecture.}
+The IQN parameterises the quantile function as a neural network that takes both state $s$ and quantile level $\tau$ as explicit inputs. Specifically, we learn a function $Z_\tau(s,a;\theta)$, with $\theta$ the network parameters (weights and biases), whose scalar output estimates the $\tau$-quantile of the return distribution $Z(s,a)$, such that
+\begin{equation}\label{eq:iqn_approx}
+    Z_\tau(s,a;\theta) \approx F_{Z(s,a)}^{-1}(\tau),
+\end{equation}
+The network consists of three components.
+ 
+\subparagraph{State encoder $\psi_\theta$.} A multi-layer perceptron maps the state $s \in \mathbb{R}^5$ into an embedding space $\mathbb{R}^d$:
+\begin{equation}\label{eq:state_encoder}
+    \psi_\theta(s) = \operatorname{ReLU}\bigl(\operatorname{LN}(W_L \cdots \operatorname{ReLU}(\operatorname{LN}(W_1 s + b_1))\cdots + b_L)\bigr) \in \mathbb{R}^d,
+\end{equation}
+where $\operatorname{LN}(\cdot)$ denotes layer normalisation \citet{ba2016layer}. The original IQN architecture \citet{dabney2018implicit} employs convolutional layers to process high-dimensional image observations in Atari environments. Since our state space is a low-dimensional continuous vector (Eq.~\ref{eq:state_vector}), we replace the convolutional encoder with a fully connected MLP and apply layer normalisation after each linear transformation to stabilise training under the non-stationary reward distributions typical of financial execution.
+ 
+\subparagraph{Cosine quantile embedding $\phi$.} Following \citet{dabney2018implicit}, quantile levels $\tau \in [0,1]$ are embedded into $\mathbb{R}^d$ via a cosine basis expansion:
+\begin{equation}\label{eq:cosine_embed}
+    \phi_j(\tau) = \operatorname{ReLU}\!\left(\sum_{i=0}^{n-1} \cos(\pi i \tau) \cdot w_{ij} + b_j\right), \quad j = 1, \ldots, d,
+\end{equation}
+where $n$ is the cosine embedding dimension and $\{w_{ij}, b_j\}$ are learnable parameters. The cosine basis provides a smooth, periodic representation of quantile levels: nearby values of $\tau$ produce similar embeddings, enabling the network to interpolate between quantiles. The $i=0$ term contributes a constant $\cos(0) = 1$, providing the embedding with a $\tau$-independent component.
+ 
+\subparagraph{Output network $f_\theta$.} The state embedding and quantile embedding are combined via element-wise (Hadamard) product and passed through an output MLP:
+\begin{equation}\label{eq:iqn_output}
+    Z_\tau(s,a;\theta) = f_\theta\bigl(\psi_\theta(s) \odot \phi(\tau)\bigr)_a,
+\end{equation}
+where $\odot$ denotes the element-wise product and $(\cdot)_a$ selects the output head corresponding to action $a$. The output $f_\theta : \mathbb{R}^d \to \mathbb{R}^{|\mathcal{A}|}$ produces quantile values simultaneously for all actions.
+ 
+
+% -----------------------------------------------------------------------------
+\subsection*{Training Objective}
+% -----------------------------------------------------------------------------
+
+Training proceeds by minimising the quantile Huber loss \citet{dabney2018implicit}, which combines quantile regression with Huber smoothing for numerical stability. Given a transition $(s, a, r, s')$ sampled from the replay buffer, we draw $N$ quantile levels $\{\tau_i\}_{i=1}^N \overset{\text{i.i.d.}}{\sim} \mathcal{U}[0,1]$ for the online network and $N'$ quantile levels $\{\tau_j'\}_{j=1}^{N'} \overset{\text{i.i.d.}}{\sim} \mathcal{U}[0,1]$ for the target network. The temporal-difference (TD) target for each target quantile $\tau_j'$ is
+\begin{equation}\label{eq:td_target}
+    \hat{y}_j = r + \lambda(1 - d) \cdot F_{Z(s',a^*)}^{-1}(\tau_j';\bar{\theta}),
+\end{equation}
+where $d \in \{0,1\}$ is the terminal indicator, $\bar{\theta}$ denotes the target network parameters, and $a^*$ is the greedy action selected using the online network (Double DQN style, \citealp{van2016deep}):
+\begin{equation}\label{eq:greedy_action}
+    a^* = \arg\max_{a'} \frac{1}{N''} \sum_{k=1}^{N''} F_{Z(s',a')}^{-1}(\tau_k'';\theta), \quad \tau_k'' \overset{\text{i.i.d.}}{\sim} \mathcal{U}[0,1].
+\end{equation}
+The TD error between online quantile $\tau_i$ and target quantile $\tau_j'$ is
+\begin{equation}\label{eq:td_error}
+    u_{ij} = \hat{y}_j - F_{Z(s,a)}^{-1}(\tau_i;\theta).
+\end{equation}
+The quantile Huber loss is then defined as
+\begin{equation}\label{eq:quantile_huber}
+    \rho_{\tau_i}^{\kappa}(u_{ij}) = |\tau_i - \mathbf{1}\{u_{ij} < 0\}| \cdot \frac{\mathcal{L}_\kappa(u_{ij})}{\kappa},
+\end{equation}
+where $\mathcal{L}_\kappa$ is the Huber loss with threshold $\kappa > 0$:
+\begin{equation}\label{eq:huber}
+    \mathcal{L}_\kappa(u) = 
+    \begin{cases}
+        \tfrac{1}{2}u^2 & \text{if } |u| \leq \kappa, \\[4pt]
+        \kappa\bigl(|u| - \tfrac{1}{2}\kappa\bigr) & \text{if } |u| > \kappa.
+    \end{cases}
+\end{equation}
+The asymmetric weighting $|\tau_i - \mathbf{1}\{u_{ij} < 0\}|$ is the key mechanism: for a quantile level $\tau_i$, overestimation errors (positive $u$) are weighted by $\tau_i$, while underestimation errors (negative $u$) are weighted by $1 - \tau_i$. This drives the network's output at level $\tau_i$ towards the true $\tau_i$-quantile of the return distribution. Division by $\kappa$ normalises the loss so that its scale is invariant to the choice of $\kappa$. The total loss, averaged over all pairs of online and target quantile samples and over the minibatch, is
+\begin{equation}\label{eq:total_loss}
+    L(\theta) = \frac{1}{B} \sum_{b=1}^{B} \frac{1}{N} \sum_{i=1}^{N} \frac{1}{N'} \sum_{j=1}^{N'} \rho_{\tau_i}^{\kappa}\!\bigl(u_{ij}^{(b)}\bigr).
+\end{equation}
+
+% -----------------------------------------------------------------------------
+\subsection*{Risk-Averse Policy via Distortion Risk Measures}\label{subsec:risk_policy}
+% -----------------------------------------------------------------------------
+
+% NOTE: This subsection is substantially rewritten from the original to:
+%   (a) introduce the general distortion risk measure framework,
+%   (b) unify CVaR notation under the risk-management convention, and
+%   (c) add a caveat on time-inconsistency.
+
+We now describe how the learned return distribution can be leveraged for risk-averse decision-making. Rather than introducing CVaR in isolation, we situate it within the general framework of \emph{distortion risk measures}, which clarifies the theoretical foundations and highlights the generality of our approach.
+\paragraph{Distortion risk measures.}
+A distortion risk measure \citet{wang2000class} is defined by a non-decreasing function $g:[0,1] \to [0,1]$ satisfying $g(0) = 0$ and $g(1) = 1$. Given a random variable $Z$ with quantile function $F_Z^{-1}$, the associated risk measure is
+\begin{equation}\label{eq:distortion}
+    \rho_g[Z] = \int_0^1 F_Z^{-1}(\tau)\, dg(\tau).
+\end{equation}
+When $g(\tau) = \tau$ (the identity), Eq.~\eqref{eq:distortion} recovers the expectation $\mathbb{E}[Z]$. By choosing different distortion functions, one obtains risk measures that overweight or underweight different regions of the distribution.
+\paragraph{Conditional Value-at-Risk.}
+The cumulative return $Z(s,a)$ is a reward signal where higher 
+values represent better execution outcomes. A risk-averse agent 
+should focus on the lower quantiles of $Z$, which correspond to 
+the worst execution scenarios. Following the IQN framework of 
+\citet{dabney2018implicit}, we define the truncated mean at 
+level $\eta \in (0,1]$ as
+\begin{equation}\label{eq:cvar_def}
+    \operatorname{CVaR}_\eta[Z] 
+    = \frac{1}{\eta} \int_0^{\eta} 
+    F_Z^{-1}(\tau)\, d\tau,
+\end{equation}
+which averages the lowest $\eta$-fraction of the return 
+distribution. This corresponds to the distortion function 
+$g_\eta(\tau) = \min\left(\dfrac{\tau}{\eta},\, 1\right)$. 
+When $\eta = 1$, Eq.~\eqref{eq:cvar_def} recovers the 
+expectation $\mathbb{E}[Z]$. As $\eta$ decreases, the agent 
+focuses on progressively worse outcomes.
+
+\begin{remark}\label{rem:cvar_convention}
+The subscript in IQN-CVaR$_{0.95}$ refers to the truncation 
+level $\eta = 0.95$: the agent averages the lower $95\%$ of 
+the return distribution, excluding the most optimistic $5\%$ 
+of outcomes. This is a mild form of risk aversion that 
+prevents the agent from relying on favourable tail events.
+
+In the results tables, $\operatorname{CVaR}_{0.90}[\mathrm{IS}]$ 
+and $\operatorname{CVaR}_{0.95}[\mathrm{IS}]$ follow the 
+standard risk-management convention and report the mean IS in 
+the costliest $10\%$ and $5\%$ of episodes, respectively:
+\begin{equation*}
+    \operatorname{CVaR}_{0.95}[\mathrm{IS}] 
+    = \frac{1}{0.05} \int_{0.95}^{1} 
+    F_{\mathrm{IS}}^{-1}(\tau)\, d\tau.
+\end{equation*}
+The two uses of the subscript $0.95$ refer to different 
+conventions: the policy name IQN-CVaR$_{0.95}$ denotes the 
+quantile truncation level $\eta = 0.95$, while the evaluation 
+metric $\operatorname{CVaR}_{0.95}[\mathrm{IS}]$ denotes the 
+confidence level at which tail risk is measured.
+\end{remark}
+
+\paragraph{CVaR policy distortion.}
+A key insight from \citet{dabney2018implicit} is that risk-sensitive policies can be obtained by modifying the quantile sampling range during action selection, leveraging the theory of distortion risk measures \citet{wang2000class, majumdar2020should}. By restricting 
+to $\tau \sim \mathcal{U}[0, \eta]$ with $\eta < 1$ at 
+inference time, the agent selects actions based on the lower 
+$\eta$-fraction of the return distribution, effectively 
+ignoring favourable but unreliable upper-tail outcomes:
+\begin{equation}\label{eq:cvar_action}
+    a^*_{\operatorname{CVaR}} = \arg\max_{a} \frac{1}{N} 
+    \sum_{k=1}^{N} F_{Z(s,a)}^{-1}(\tau_k;\theta), \quad 
+    \tau_k \overset{\text{i.i.d.}}{\sim} 
+    \mathcal{U}[0,\, \eta].
+\end{equation}
+With $\eta = 0.95$, the agent excludes the best $5\%$ of 
+return outcomes from its decision-making. With $\eta = 1$, 
+the full quantile range is used and the policy reduces to 
+risk-neutral IQN.
+
+% \begin{remark}\label{rem:cvar_caveat}
+% The greedy action selection in Eq.~\eqref{eq:cvar_action} 
+% provides an approximation to the CVaR-optimal policy for the 
+% episodic return. The CVaR of cumulative multi-period returns is 
+% not a time-consistent dynamic risk measure: optimising CVaR 
+% greedily at each step does not in general yield the globally 
+% CVaR-optimal policy over the full episode 
+% \citet{chow2015risk, tamar2015optimizing}. Exact CVaR 
+% optimisation requires augmenting the state space with a running 
+% risk variable \citet{chow2015risk}. Nevertheless, the greedy 
+% distortion approach is widely adopted in practice due to its 
+% simplicity and strong empirical performance 
+% \citet{dabney2018implicit, majumdar2020should}, and our 
+% experimental results confirm its effectiveness in the execution 
+% setting.
+% \end{remark}
+
+\paragraph{Policy variants.}
+In our framework, we train a single IQN network with 
+$\tau \sim \mathcal{U}[0,1]$ and derive two policies from 
+the same trained weights by varying the quantile sampling 
+range at inference:
+\begin{equation}\label{eq:policy_variants}
+\begin{aligned}
+    &\text{IQN-neutral:}    
+    &&\tau \sim \mathcal{U}[0,\, 1]    
+    &&\Longrightarrow\ \text{optimises } 
+    \mathbb{E}[Z(s,a)],\\[4pt]
+    &\text{IQN-CVaR}_{0.95}\text{:} 
+    &&\tau \sim \mathcal{U}[0,\, 0.95] 
+    &&\Longrightarrow\ \text{averages the lower } 
+    95\%\ \text{of the return distribution}.
+\end{aligned}
+\end{equation}
+% NOTE: The sampling range is [0, 1-beta], so:
+%   - CVaR_{0.90} => sample from U[0, 0.10]  (worst 10%)
+%   - CVaR_{0.95} => sample from U[0, 0.05]  (worst 5%)
+% This is consistent with the risk-management convention in Eq. (eq:cvar_def).
+
+% \subsection*{Training Procedure}
+
+% We summarise the complete training procedure in Algorithm~\ref{alg:iqn_training}.
+
+% \begin{algorithm}[H]
+% \caption{IQN Training for Optimal Execution}\label{alg:iqn_training}
+% \begin{algorithmic}[1]
+% \REQUIRE Environment $\mathcal{E}$, IQN parameters $\theta$, target parameters $\bar{\theta} \leftarrow \theta$
+% \REQUIRE Replay buffer $\mathcal{D}$, minibatch size $B$, target update frequency $C$
+% \REQUIRE Quantile samples $N$, $N'$, $N''$; Huber threshold $\kappa$; discount $\lambda$
+% \FOR{episode $= 1, 2, \ldots, M$}
+%     \STATE Observe initial state $s_0$ from $\mathcal{E}$
+%     \FOR{$t = 0, 1, \ldots, N_{\text{periods}} - 1$}
+%         \STATE Select action $a_t$ via $\varepsilon$-greedy with $\tau \sim \mathcal{U}[0, 1]$
+%         \STATE Execute $a_t$, observe $r_t$, $s_{t+1}$, done
+%         \STATE Store $(s_t, a_t, r_t, s_{t+1}, \text{done})$ in $\mathcal{D}$
+%         \IF{$|\mathcal{D}| \geq B$}
+%             \STATE Sample minibatch of $B$ transitions from $\mathcal{D}$
+%             \STATE Sample $\tau_i \sim \mathcal{U}[0, 1]$ for $i = 1, \ldots, N$ \hfill \textit{(online quantiles)}
+%             \STATE Sample $\tau'_j \sim \mathcal{U}[0, 1]$ for $j = 1, \ldots, N'$ \hfill \textit{(target quantiles)}
+%             \STATE Compute greedy action $a^*$ via Eq.~\eqref{eq:double_dqn}
+%             \STATE Compute TD targets $\hat{y}_j$ via Eq.~\eqref{eq:td_target}
+%             \STATE Compute loss $L(\theta)$ via Eq.~\eqref{eq:total_loss}
+%             \STATE Update $\theta \leftarrow \theta - \eta \nabla_\theta L(\theta)$ \hfill \textit{(Adam optimiser)}
+%         \ENDIF
+%         \IF{step mod $C = 0$}
+%             \STATE $\bar{\theta} \leftarrow \theta$ \hfill \textit{(hard target update)}
+%         \ENDIF
+%     \ENDFOR
+% \ENDFOR
+% \STATE \textbf{Inference:} Select actions using $\tau \sim \mathcal{U}[0, \alpha]$ for desired risk level $\alpha$
+% \end{algorithmic}
+% \end{algorithm}
+
+% Exploration follows a linear $\varepsilon$-greedy schedule, decaying from $\varepsilon = 1.0$ to $\varepsilon = 0.01$ over a fixed number of steps.  Experience is stored in a uniform replay buffer of fixed capacity.  The target network $\bar{\theta}$ is updated via hard copy from the online network every $C$ steps.  Model selection is performed on a held-out validation set: the checkpoint with the lowest validation $\cvar_{0.95}$ of implementation shortfall is retained for final evaluation, ensuring that the selected model prioritises tail-risk reduction.
+
+% ============================================================================
+% SECTION 6: EXPERIMENTS
+% ============================================================================
+
+\section{Experiments}\label{sec:experiments}
+
+We evaluate our framework in two complementary settings.  First, a controlled simulation study validates the methodology under known price dynamics and provides a direct comparison with the Almgren--Chriss analytical solution.  Second, an empirical study on real NYSE TAQ data demonstrates the practical effectiveness of the approach under non-stationary market conditions.
+
+\subsection*{Simulation Study}\label{subsec:simulation}
+We consider two simulated price processes to evaluate our framework under progressively more realistic conditions.
+
+\textbf{Model 1: Almgren--Chriss (Gaussian).}  The standard Almgren--Chriss model \citet{almgren2001optimal} assumes arithmetic Brownian motion for the mid-price:
+\begin{equation}\label{eq:ac_price}
+    p_{t+1} = p_t - \gamma \cdot x_t + \sigma \sqrt{\Delta t}\, \xi_t, \quad \xi_t \overset{\text{i.i.d.}}{\sim} \mathcal{N}(0, 1),
+\end{equation}
+where $\gamma$ is the permanent impact coefficient and $\sigma$ is the per-period volatility.  The execution price includes temporary impact:
+\begin{equation}\label{eq:ac_exec}
+    \tilde{p}_t = p_t - \eta \cdot \frac{x_t}{\Delta t}.
+\end{equation}
+For these linear impact dynamics, the risk-adjusted execution problem admits a closed-form minimiser \citet{almgren2001optimal}. Writing $t_k = k\,\Delta t$ for the decision times, the optimal remaining inventory decays deterministically as
+\begin{equation}\label{eq:ac_solution}
+    q_k^{\mathrm{AC}} = \frac{\sinh\!\big(\kappa_{\mathrm{AC}}\,(T - t_k)\big)}{\sinh\!\big(\kappa_{\mathrm{AC}}\, T\big)}\, q_0, \qquad k = 0, 1, \ldots, N,
+\end{equation}
+and the optimal trade in period $k$ is the difference $x_k^{\mathrm{AC}} = q_{k-1}^{\mathrm{AC}} - q_k^{\mathrm{AC}}$. The decay rate $\kappa_{\mathrm{AC}}$ is set by the trader's risk-aversion parameter $\tilde{\lambda}$ via
+\begin{equation}\label{eq:ac_kappa}
+    \kappa_{\mathrm{AC}} \;\approx\; \sqrt{\frac{\tilde{\lambda}\,\sigma^2}{\eta}},
+\end{equation}
+so that more risk-averse traders (larger $\tilde{\lambda}$) liquidate more aggressively. In the risk-neutral limit $\tilde{\lambda} \to 0$ (hence $\kappa_{\mathrm{AC}} \to 0$), the trajectory~\eqref{eq:ac_solution} reduces to the uniform schedule $q_k^{\mathrm{AC}} = (1 - t_k/T)\,q_0 = (N-k)\,q_0/N$, which is exactly TWAP. The tilde on $\tilde{\lambda}$ distinguishes this risk-aversion parameter from the discount factor $\lambda$ used elsewhere.
+Under this model, the IS distribution is Gaussian by construction.  This serves as a sanity check: RL agents should approximately recover the known AC optimal schedule, and IQN-CVaR should show minimal advantage since Gaussian distributions have thin tails.
+
+\textbf{Model 2: Jump-Diffusion.} To introduce fat-tailed IS 
+distributions, we augment the Almgren--Chriss price dynamics 
+(Eq.~\ref{eq:ac_price}) with a compound Poisson jump component:
+\begin{equation}\label{eq:jd_price}
+    p_{t+1} = p_t - \gamma \cdot x_t + \sigma \sqrt{\Delta t}\, 
+    \xi_t + \sum_{k=1}^{N_t} J_k,
+\end{equation}
+where the first three terms are identical to the Almgren--Chriss 
+model, $N_t \sim \mathrm{Poisson}(\lambda \cdot \Delta t)$ is the 
+number of jumps in period $t$, and each jump size 
+$J_k \overset{\text{i.i.d.}}{\sim} \mathcal{N}(\mu_J, \sigma_J^2)$ 
+with $\mu_J < 0$ representing adverse price shocks. The addition 
+of compound Poisson jumps 
+\citet{merton1976option} introduces occasional large price 
+dislocations that generate heavy-tailed IS distributions, precisely 
+the regime where distributional RL is expected to provide the 
+greatest benefit.
+
+In both models, the bid--ask spread is generated proportional to 
+volatility with multiplicative noise, and order flow imbalance is modeled as an 
+Ornstein--Uhlenbeck process, reflecting the well-documented 
+mean-reverting behaviour of limit order book imbalance 
+measures \citet{lehalle2019incorporating}.  
+\subsubsection*{Experimental Setup}
+Table~\ref{tab:sim_params} summarises the simulation parameters.  The MDP parameters are calibrated to a liquid large-cap 
+stock following the numerical examples in 
+\citet{almgren2001optimal}, Section 3.4.
+
+\begin{table}[H]
+    \centering
+    \caption{Simulation parameters.}
+    \label{tab:sim_params}
+    \begin{tabular}{@{}lll@{}}
+        \toprule
+        \textbf{Parameter} & \textbf{Symbol} & \textbf{Value} \\
+        \midrule
+        \multicolumn{3}{l}{\textit{MDP parameters}} \\
+        Decision periods           & $N$             & 5 \\
+        Execution horizon          & $T$             & 60 minutes \\
+        Initial inventory          & $q_0$           & 100{,}000 shares \\
+        Arrival price              & $p_0$           & \$100.00 \\
+        Temporary impact           & $\eta$          & $2.5 \times 10^{-6}$ \\
+        Permanent impact           & $\gamma$        & $2.5 \times 10^{-7}$ \\
+        Volatility                 & $\sigma$        & 0.00095 \\
+        Penalty coefficient        & $a$             & 0.001 \\
+        Discount factor            & $\lambda$       & 0.99 \\
+        \midrule
+        \multicolumn{3}{l}{\textit{Jump-diffusion parameters}} \\
+        Jump intensity             & $\lambda_J$     & 0.3 per period \\
+        Jump mean                  & $\mu_J$         & $-0.002$ \\
+        Jump volatility            & $\sigma_J$      & 0.005 \\
+        \midrule
+        \multicolumn{3}{l}{\textit{Training parameters}} \\
+        Training episodes          &                 & 30{,}000 \\
+        Evaluation episodes        &                 & 10{,}000 \\
+        Minibatch size             & $B$             & 64 \\
+        Learning rate              & $\eta_{\text{lr}}$ & $10^{-4}$ \\
+        Replay buffer capacity     &                 & 50{,}000 \\
+        Target update frequency    & $C$             & 100 steps \\
+        \midrule
+        \multicolumn{3}{l}{\textit{IQN-specific parameters}} \\
+        Online quantile samples    & $N_\tau$        & 8 \\
+        Target quantile samples    & $N'_\tau$       & 8 \\
+        Policy quantile samples    & $N''_\tau$      & 32 \\
+        Cosine embedding dimension & $n$             & 64 \\
+        Hidden dimension           & $d$             & 64 \\
+        Huber threshold            & $\kappa$        & 1.0 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\textbf{Agents.}  We compare six agents.  (i)~\textbf{TWAP}: time-weighted average price, executing $q_0/N$ shares per period.  (ii)~\textbf{AC}: the Almgren--Chriss analytical optimal schedule \citet{almgren2001optimal} with risk aversion $10^{-6}$.  (iii)~\textbf{DQN}: Deep Q-Network \citet{mnih2015human}.  (iv)~\textbf{DDQN}: Double Deep Q-Network \citet{van2016deep}.  (v)~\textbf{IQN-neutral}: Implicit Quantile Network with $\tau \sim \mathcal{U}[0, 1]$ at inference.  (vi)~\textbf{IQN-CVaR$_{0.95}$}: the same IQN network with $\tau \sim \mathcal{U}[0, 0.95]$ at inference. All learned agents share the same training hyperparameters 
+(learning rate, batch size, replay buffer, exploration 
+schedule) and the same base network architecture (two hidden 
+layers with LayerNorm and ReLU activations) for fair 
+comparison. The only architectural difference is that IQN 
+includes an additional cosine quantile embedding module to 
+condition on $\tau$, which is the minimal overhead required 
+by the distributional method.
+
+\textbf{Training and evaluation.}  All RL agents are trained for 30{,}000 episodes with $\varepsilon$-greedy exploration decaying linearly from 1.0 to 0.01 over 50{,}000 steps.  Model selection is performed on a validation set of 300 
+episodes: the model parameters achieving the lowest 
+validation CVaR$_{0.95}$ during training are retained 
+for final evaluation.  Final evaluation uses 10{,}000 episodes with the greedy policy ($\varepsilon = 0$).  All agents share the same random seed for fair comparison.
+% UPDATED: Almgren-Chriss Results (replace the corresponding part in
+% experiments_simulation.tex)
+% ============================================================================
+
+\subsubsection*{Results: Almgren--Chriss Environment}
+
+\begin{table}[H]
+    \centering
+   
+    \begin{tabular}{@{}lcccccc@{}}
+        \toprule
+        \textbf{Agent} & \textbf{Mean IS} & \textbf{Std IS} & \textbf{CVaR$_{0.90}$} & \textbf{CVaR$_{0.95}$} & \textbf{Max IS} & \textbf{GL} \\
+        \midrule
+        TWAP               & 1.4221 & 0.3711 & 2.0802 & 2.1956 & 2.6910 & 0.0000 \\
+        AC                 & \textbf{1.4220} & 0.3665 & 2.0721 & 2.1852 & 2.6557 & 0.0000 \\
+        DQN                & 1.6763 & 0.1741 & 1.9229 & 1.9568 & 2.4150 & 0.0000 \\
+        DDQN               & 1.4708 & 0.2475 & 1.9065 & 1.9764 & 2.4890 & 0.0000 \\
+        IQN-neutral        & 1.6030 & \textbf{0.15} & 1.8652 & 1.9084 & 2.1705 & 0.0000 \\
+        IQN-CVaR$_{0.95}$  & 1.6027 & 0.1504 & \textbf{1.865} & \textbf{1.9082} & \textbf{2.1071} & 0.0000 \\
+        \bottomrule
+    \end{tabular}
+
+     \caption{Execution performance under Almgren--Chriss dynamics (10{,}000 episodes). All values in basis points.}
+    \label{tab:ac_results}
+\end{table}
+Several observations merit discussion.  First, TWAP and AC 
+produce nearly identical results (Mean IS $\approx 1.42$ bps, 
+CVaR$_{0.95}$ $\approx 2.19$ bps), consistent with theory: 
+under small risk aversion, the AC optimal trajectory 
+approaches uniform execution as the risk aversion parameter 
+tends to zero \citet{almgren2001optimal}. Second, RL agents exhibit a clear variance--mean tradeoff.  
+IQN-CVaR$_{0.95}$ achieves the lowest CVaR$_{0.95}$ (1.9082 
+bps) and the lowest maximum shortfall (2.1071 bps) among all 
+agents, representing a 13.1\% reduction in tail risk and a 
+21.7\% reduction in worst-case cost relative to TWAP.  This 
+improvement comes at the cost of a modestly higher mean IS 
+(1.6027 vs.\ 1.4221 bps).  This tradeoff arises because the 
+RL agents optimise a penalised objective that discourages 
+large trades, producing more conservative and consistent 
+execution schedules compared to the fixed TWAP allocation. Third, IQN-neutral and IQN-CVaR$_{0.95}$ are nearly 
+indistinguishable across all metrics, confirming that CVaR 
+distortion provides no additional benefit when the IS 
+distribution is Gaussian with thin tails.  This is the 
+expected and correct behaviour: the distributional machinery 
+identifies that no tail-risk reduction is possible in this 
+setting and defaults to near risk-neutral execution.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{is_subplots.png}
+    \caption{Implementation shortfall distributions under Almgren--Chriss dynamics (10{,}000 episodes). Each panel displays the density for a single agent, with vertical lines indicating the mean (solid black) and CVaR$_{0.95}$ (dashed red). Most agents produce similar distributions, confirming that CVaR distortion offers no additional benefit when the IS distribution is Gaussian with thin tails.}
+    \label{fig:is_subplots}
+\end{figure}
+
+\subsubsection*{Results: Jump-Diffusion Environment}
+
+\begin{table}[H]
+    \centering
+    
+    \begin{tabular}{@{}lcccccc@{}}
+        \toprule
+        \textbf{Agent} & \textbf{Mean IS} & \textbf{Std IS} & \textbf{CVaR$_{0.90}$} & \textbf{CVaR$_{0.95}$} & \textbf{Max IS} & \textbf{GL} \\
+        \midrule
+        TWAP               & 2.9080 & 1.2108 & 5.1910 & 5.6719 & 9.2388 & 0.0004 \\
+        AC                 & 2.8518 & 1.1960 & 5.1061 & 5.5857 & 9.2002 & 0.0004 \\
+        DQN                & 2.1330 & 0.2860 & 2.6790 & 2.7977 & 3.5744 & 0.0000 \\
+        DDQN               & \textbf{1.9727} & 0.4323 & 2.8127 & 2.9953 & 4.5275 & 0.0000 \\
+        IQN-neutral        & 1.9819 & \textbf{0.2185} & \textbf{2.4049} & \textbf{2.4957} & \textbf{3.0259} & 0.0000 \\
+        IQN-CVaR$_{0.95}$  & 1.9799 & 0.2212 & 2.4092 & 2.5042 & 3.2776 & 0.0000 \\
+        \bottomrule
+    \end{tabular}
+    \caption{Execution performance under jump-diffusion dynamics (10{,}000 episodes). All values in basis points.}
+    \label{tab:jd_results}
+\end{table}
+
+The introduction of jump risk fundamentally changes the landscape of execution performance.  We organise our discussion around three comparisons: rule-based versus RL agents, DQN/DDQN versus IQN.
+ 
+\textbf{Rule-based baselines versus RL agents.}  TWAP and AC are severely affected by jumps: their CVaR$_{0.95}$ rises from 2.19 to 5.67 bps and maximum shortfall from 2.69 to 9.24 bps compared to the Almgren--Chriss setting.  Because these agents follow predetermined schedules, they cannot adapt to sudden price dislocations and are fully exposed to jump risk.  In contrast, all RL agents achieve CVaR$_{0.95}$ below 3 bps, representing at least a 47.1\% reduction relative to TWAP.
+ 
+\textbf{DQN and DDQN versus IQN.}  Among the RL agents, IQN-neutral achieves the best risk-adjusted profile.  While DQN attains a competitive mean IS (2.13 bps), its tail risk is notably higher: CVaR$_{0.95}$ of 2.80 bps and maximum shortfall of 3.57 bps, compared to 2.50 bps and 3.03 bps for IQN-neutral --- reductions of 10.7\% and 15.1\%, respectively.  DDQN achieves the lowest mean IS (1.97 bps) but at the cost of substantially higher execution variance (Std IS = 0.43, nearly double IQN's 0.22) and a maximum shortfall of 4.53 bps, which is 49.5\% higher than IQN-neutral.  This reveals a critical distinction: DQN and DDQN optimise the expected return and have no mechanism to control the shape of the return distribution.  DDQN occasionally discovers aggressive strategies that lower mean cost but generate outlier episodes with high shortfall.  IQN, by learning the full distribution of returns, produces a policy that is inherently more stable --- it avoids actions whose expected value may be favourable but whose tail risk is unacceptable.
+ 
+% \textbf{IQN-neutral versus IQN-CVaR$_{0.95}$.}  Under jump-diffusion dynamics, IQN-neutral and IQN-CVaR$_{0.95}$ achieve identical mean IS (1.98 bps) and nearly identical CVaR$_{0.95}$ (2.50 bps).  However, IQN-CVaR$_{0.95}$ shows a slightly higher maximum shortfall (3.28 vs.\ 3.03 bps).  This is expected in simulation: the jump-diffusion model produces a controlled fat tail, and the IQN-neutral policy already learns to avoid the worst outcomes.  The CVaR distortion has limited room to improve upon an already well-calibrated distributional policy.  As we show in Section~\ref{subsec:empirical}, the advantage of CVaR distortion becomes pronounced on real market data, where the IS distribution exhibits more complex and heavier tails than the parametric jump-diffusion model.
+ 
+% \textbf{Consistency of execution.}  A particularly important metric for institutional traders is execution consistency, measured by the standard deviation of IS.  IQN-neutral and IQN-CVaR$_{0.95}$ achieve Std IS of 0.22 bps --- a 5.5$\times$ improvement over TWAP (1.21 bps) and a 2.0$\times$ improvement over DDQN (0.43 bps).  This means that an institutional desk deploying IQN can predict its execution cost with far greater precision, facilitating tighter risk budgets and more reliable transaction cost analysis.
+ 
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{is_subplots_jd.png}
+    \caption{Implementation shortfall distributions under jump-diffusion dynamics (10{,}000 episodes).  Each panel displays the density for a single agent, with vertical lines indicating the mean (solid black) and CVaR$_{0.95}$ (dashed red).  IQN-neutral and IQN-CVaR$_{0.95}$ exhibit the most concentrated distributions with the lowest tail risk.}
+    \label{fig:is_subplots_jd}
+\end{figure}
+The narrower IS distribution of IQN relative to DQN and DDQN is clearly visible in Figure~\ref{fig:is_subplots_jd}, which displays the IS density for each agent.  TWAP and AC exhibit wide, right-skewed distributions extending beyond 5 bps, driven by adverse jump events during which these fixed-schedule agents continue executing at unfavourable prices.  DQN and DDQN concentrate their IS mass in a tighter range but retain visible right-tail dispersion, with DDQN spanning approximately 1.0--3.0 bps and showing a wider spread that reflects its more aggressive execution style.  IQN-neutral and IQN-CVaR$_{0.95}$, by contrast, exhibit compact, unimodal distributions concentrated between 1.4 and 2.6 bps, with virtually no probability mass beyond 3 bps.  This distributional compactness is a direct consequence of learning the full return distribution: the agent avoids actions that could produce outlier outcomes, even when those actions might occasionally yield lower average cost.
+
+ 
+
+In general, the simulation study yields two key findings.  First, under thin-tailed (Gaussian) IS dynamics, distributional RL provides no additional benefit over standard value-based methods, confirming that our framework does not introduce unnecessary complexity when tail risk is absent.  Second, under fat-tailed (jump-diffusion) dynamics, all RL agents dramatically outperform static scheduling rules (TWAP, AC), with IQN achieving the best risk-adjusted performance.  
+
+% Third, the IQN-CVaR mechanism correctly identifies the risk profile of the environment: it is inert when tails are thin (Almgren--Chriss) and protective when tails are heavy (jump-diffusion), validating the distributional approach as a principled tool for adaptive risk management.
+
+
+% ============================================================================
+% SECTION 6.2: EMPIRICAL STUDY (NYSE TAQ)
+% ============================================================================
+
+\subsection{Empirical Study: NYSE TAQ Data}\label{subsec:empirical}
+
+\subsubsection*{Data Description}
+
+We evaluate our framework on real market data from the NYSE Trade and Quote (TAQ) database, accessed via the Wharton Research Data Services (WRDS) platform.  We focus on Apple Inc.\ (AAPL), one of the most liquid U.S.\ equities, using the full calendar year 2014 (252 trading days). The TAQ database provides millisecond-resolution data for all U.S.\ exchange-listed securities.  We use two tables from the Daily TAQ Millisecond dataset: (i)~the National Best Bid and Offer (NBBO) table, which records the best bid and ask prices and sizes across all exchanges at each timestamp, and (ii)~the Consolidated Trades table, which records every executed trade with price, size, and exchange information.
+\subsubsection*{Data Preprocessing}
+We construct one-minute bars from the raw TAQ data using 
+standard market microstructure data cleaning procedures. 
+The preprocessing pipeline proceeds as follows:
+
+\begin{enumerate}[nosep]
+    \item \textbf{Quote filtering.}  Retain only quotes during regular trading hours (9:30--16:00 ET).  Remove records with zero or missing bid/ask prices, and discard crossed quotes where the bid exceeds the ask.
+
+    \item \textbf{NBBO construction.}  For each one-minute interval, take the last recorded quote.  Compute the mid-price as $p_t^{\text{mid}} = (\text{bid}_t + \text{ask}_t)/2$ and the spread as $\text{spread}_t = \text{ask}_t - \text{bid}_t$.
+
+    \item \textbf{Trade signing.}  Classify each trade as buyer- or 
+seller-initiated using the tick rule (see 
+\citealt{lee1991inferring}): a trade is classified as a buy 
+(sell) if the trade price is higher (lower) than the previous 
+trade price. Trades at the same price inherit the previous 
+classification.
+
+    \item \textbf{One-minute aggregation.}  For each minute, aggregate buy volume ($V_t^{\text{buy}}$), sell volume ($V_t^{\text{sell}}$), total volume, and trade count.  Compute order flow imbalance via Eq.~\eqref{eq:imbalance}.
+
+\end{enumerate}
+
+The final dataset contains 98{,}058 one-minute bars across 252 trading days.  Table~\ref{tab:data_summary} reports summary statistics.
+
+\begin{table}[H]
+    \centering
+    
+    \begin{tabular}{@{}lrrrrrr@{}}
+        \toprule
+        \textbf{Feature} & \textbf{Mean} & \textbf{Std} & \textbf{Min} & \textbf{25\%} & \textbf{75\%} & \textbf{Max} \\
+        \midrule
+        Mid-price (\$)     & 295.84  & 224.49  & 89.70   & 99.65   & 535.56   & 651.16  \\
+        Spread (\$)        & 0.0556  & 0.0655  & 0.01    & 0.01    & 0.10     & 0.71    \\
+        Imbalance          & $-$0.017 & 0.248  & $-$1.00 & $-$0.177 & 0.141   & 1.00    \\
+        Buy volume         & 41{,}138 & 140{,}962 & 0     & 9{,}303 & 48{,}070 & 23{,}663{,}379 \\
+        Sell volume        & 41{,}552 & 113{,}228 & 0     & 9{,}578 & 49{,}749 & 25{,}429{,}308 \\
+        Volatility         & 0.0004  & 0.0003  & 0.0000  & 0.0003  & 0.0005   & 0.0066  \\
+        \bottomrule
+    \end{tabular}
+\caption{Summary statistics for AAPL one-minute bars (NYSE TAQ, 2014).}
+\label{tab:data_summary}
+\end{table}
+\subsubsection*{Execution Environment}
+
+Unlike the simulation setting, the mid-price is observed 
+directly from the NBBO rather than generated by a parametric 
+model. The execution price follows 
+Eq.~\eqref{eq:taq_exec_price}, with impact proportional to 
+order size as discussed in Section~\ref{sec:problem_formulation}. 
+The state vector, action space, and reward function remain 
+identical to the simulation setting. Each episode consists of $N = 5$ decision periods spanning 
+$T = 60$ minutes, with a step stride of 12 minutes between 
+decisions. At the start of each episode, the environment 
+selects a random starting point within the available trading 
+days. The arrival price $p_0$ is set to the mid-price at the 
+episode start, and the agent must liquidate $q_0 = 5{,}000$ 
+shares over the five periods. To prevent data leakage, we partition the 252 trading days 
+chronologically by calendar month: January--July for training 
+(147 days), August--September for validation (43 days), and 
+October--December for testing (62 days).
+
+The agent is trained exclusively on data from the training period.  The validation set is used for model selection: the model parameters with the lowest validation CVaR$_{0.95}$ is retained.  Final results are reported on the held-out test set, which the agent never observes during training or model selection.
+
+% \subsubsection*{Hyperparameters}
+
+
+\begin{table}[H]
+    \centering
+    
+    \begin{tabular}{@{}lll@{}}
+        \toprule
+        \textbf{Parameter} & \textbf{Symbol} & \textbf{Value} \\
+        \midrule
+        Decision periods           & $N$             & 5 \\
+        Execution horizon          & $T$             & 60 minutes \\
+        Step stride                &                 & 12 minutes \\
+        Initial inventory          & $q_0$           & 5{,}000 shares \\
+        Temporary impact           & $\eta$          & $10^{-5}$ \\
+        Penalty coefficient        & $a$             & 0.0001 \\
+        Discount factor            & $\lambda$       & 0.99 \\
+        \midrule
+        Training episodes          &                 & 50{,}000 \\
+        Validation episodes        &                 & 300 \\
+        Test episodes              &                 & 10{,}000 \\
+        \bottomrule
+    \end{tabular}
+    \caption{Hyperparameters for the AAPL empirical study.}
+    \label{tab:taq_params}
+\end{table}
+
+
+Table~\ref{tab:taq_params} summarises the hyperparameters for the empirical study. The inventory size $q_0 = 5{,}000$ shares is small relative 
+to AAPL's average daily volume, placing the order in the 
+range of a typical institutional child order.  The remaining training hyperparameters (network architecture, quantile sampling, exploration schedule) are identical to the simulation study.
+
+\subsubsection*{Results and Analysis}
+
+% Table~\ref{tab:taq_results} reports the test-set performance across all agents.
+
+\begin{table}[H]
+    \centering
+   
+    \begin{tabular}{@{}lcccccc@{}}
+        \toprule
+        \textbf{Agent} & \textbf{Mean IS} & \textbf{Std IS} & \textbf{CVaR$_{0.90}$} & \textbf{CVaR$_{0.95}$} & \textbf{Max IS} & \textbf{GL} \\
+        \midrule
+        TWAP               & \textbf{1.5917}  & 22.1570 & 42.3244 & 54.8933 & 207.7575 & 0.8116 \\
+        AC                 & 1.6095  & 21.9114 & 41.8850 & 54.3430 & 215.9421 & 0.8077 \\
+        DQN                & 5.6108  &  0.5519 &  6.1710 &  6.3029 &  32.2486 & 0.0003 \\
+        DDQN               & 5.5851  &  1.4546 &  6.5122 &  6.9884 &  45.2367 & 0.0057 \\
+        IQN-neutral        & 5.6134  &  1.0666 &  6.3303 &  6.6230 &  41.3920 & 0.0026 \\
+        IQN-CVaR$_{0.95}$  & 5.6086  &  \textbf{0.2715} &  \textbf{6.0854} &  \textbf{6.13} &  \textbf{ 6.2367} & 0.0000 \\
+        \bottomrule
+    \end{tabular}
+
+     \caption{Execution performance on AAPL test set (October--December 2014, 10{,}000 episodes). All values in basis points.}
+    \label{tab:taq_results}
+\end{table}
+% ============================================================================
+% UPDATED: AAPL Analysis section (replace in experiments_empirical.tex)
+% ============================================================================
+
+The empirical results reveal three principal findings.
+
+\textbf{Finding 1: RL agents dramatically reduce tail risk.}  All reinforcement learning agents achieve a CVaR$_{0.95}$ below 7.00 bps, compared to 54.89 bps for TWAP --- a reduction of at least 87.3\%.  The maximum shortfall is similarly compressed: TWAP reaches 207.76 bps in the worst episode, while IQN-CVaR$_{0.95}$ never exceeds 6.2367 bps, a 97.0\% reduction.  This confirms that model-free RL agents learn adaptive execution schedules that avoid catastrophic outcomes caused by adverse intraday price movements.
+
+\textbf{Finding 2: IQN-CVaR$_{0.95}$ achieves the best risk-adjusted performance.}  Among the RL agents, IQN-CVaR$_{0.95}$ dominates on every risk metric while maintaining competitive average cost.  Table~\ref{tab:taq_comparison} compares the RL agents directly.
+
+\begin{table}[H]
+    \centering
+    \begin{tabular}{@{}lccc@{}}
+        \toprule
+        \textbf{Agent} & \textbf{Std IS ratio} & \textbf{CVaR$_{0.95}$ ratio} & \textbf{Max IS ratio} \\
+        \midrule
+        DQN / IQN-CVaR$_{0.95}$           & 2.03$\times$ & 1.03$\times$ & 5.17$\times$ \\
+        DDQN / IQN-CVaR$_{0.95}$          & 5.36$\times$ & 1.14$\times$ & 7.25$\times$ \\
+        IQN-neutral / IQN-CVaR$_{0.95}$   & 3.93$\times$ & 1.08$\times$ & 6.64$\times$ \\
+        \bottomrule
+    \end{tabular}
+    \caption{Pairwise comparison of RL agents on AAPL test set.  Values represent the ratio of each agent's metric to that of IQN-CVaR$_{0.95}$. A ratio $> 1$ indicates IQN-CVaR$_{0.95}$ outperforms.}
+    \label{tab:taq_comparison}
+\end{table}
+
+IQN-CVaR$_{0.95}$ reduces execution volatility by 3.93$\times$ relative to IQN-neutral and by 5.36$\times$ relative to DDQN, with maximum shortfall reduced by 6.64$\times$ and 7.25$\times$, respectively.  Notably, this tail-risk reduction comes at virtually no cost to average performance: the mean IS of IQN-CVaR$_{0.95}$ (5.6086 bps) is slightly lower than IQN-neutral (5.6134 bps).
+
+\textbf{Finding 3: The CVaR distortion mechanism provides zero-cost tail protection.}  IQN-neutral and IQN-CVaR$_{0.95}$ are trained identically --- they share the same network weights.  The only difference is the quantile sampling range at inference time ($\tau \sim \mathcal{U}[0, 1]$ vs.\ $\tau \sim \mathcal{U}[0, 0.95]$).  Yet this simple modification reduces the maximum shortfall from 41.3920 to 6.2367 bps (an 84.9\% reduction) while simultaneously lowering the mean IS from 5.6134 to 5.6086 bps.  This confirms the theoretical prediction: by focusing action selection on the lower quantiles of the return distribution, the CVaR distortion avoids actions that expose the trader to tail events, achieving superior risk control without any additional training cost.
+
+\textbf{The mean--risk tradeoff.}  TWAP achieves the lowest mean IS (1.5917 bps), but this low average masks extreme tail risk: the worst 5\% of episodes average 54.89 bps in shortfall.  IQN-CVaR$_{0.95}$ pays 4.02 bps more on average but eliminates 48.76 bps of tail risk, a highly favourable tradeoff for risk-averse institutional execution desks.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{AAPL_is_subplots.png}
+    \caption{Implementation shortfall distributions on AAPL test data (10{,}000 episodes).  Each panel displays the density for a single agent, with vertical lines indicating the mean (solid black) and CVaR$_{0.95}$ (dashed red).  }
+    \label{fig:is_subplots_taq}
+\end{figure}
+
+Figure~\ref{fig:is_subplots_taq} displays the IS distributions for each agent on the AAPL test set.  We can see that TWAP and AC produce wide, symmetric distributions spanning approximately $-60$ to $+70$ bps, with the CVaR$_{0.95}$ line far into the right tail --- visually confirming that the worst 5\% of episodes incur costs an order of magnitude larger than the mean.  These agents have no mechanism to avoid executing during adverse price movements, and the heavy right tail reflects episodes where intraday price swings work against the trader throughout the execution window.
+
+The four RL agents in the bottom row and the DQN panel tell a fundamentally different story.  All learned agents compress the IS distribution into a narrow range around 5.2--6.3 bps, with the CVaR$_{0.95}$ line close to the right edge of the distribution rather than far beyond it.  Among them, IQN-CVaR$_{0.95}$ exhibits the most compact shape: its distribution spans roughly 5.1--6.2 bps with a sharp cutoff, and the gap between its mean (5.61 bps) and CVaR$_{0.95}$ (6.13 bps) is only 0.52 bps.  By comparison, IQN-neutral shows a longer right tail extending to approximately 6.6 bps, and DDQN's distribution, while centred at a similar mean, spreads noticeably wider with a visible right-tail shoulder reaching toward 7.0 bps.  DQN achieves a tight core distribution but retains a faint right tail, consistent with its elevated maximum shortfall of 32.25 bps not visible at this scale. The progression from DDQN to IQN-neutral to IQN-CVaR$_{0.95}$ visually demonstrates the incremental benefit of distributional learning and CVaR distortion: each step produces a tighter, more symmetric distribution with a sharper right-tail cutoff, reflecting increasingly precise control over worst-case execution cost.  Note that the different x-axis scales between the top and bottom rows underscore the magnitude of risk reduction: the RL agents operate in a 1--2 bps range while TWAP and AC are exposed to fluctuations spanning over 100 bps.
+
+
+% ============================================================================
+% SECTION 7: CONCLUSION
+% ============================================================================
+
+\section{Conclusion}\label{sec:conclusion}
+
+This paper has studied risk-averse optimal execution through the lens of
+distributional reinforcement learning, combining implicit quantile networks
+with a CVaR-based policy distortion. The experimental evaluation was
+conducted in two complementary settings: controlled simulations with known
+price dynamics and an empirical study on millisecond-resolution NYSE TAQ
+data. The two settings produce mutually consistent findings.
+
+When price risk is mild and well-behaved, as in the Almgren--Chriss Gaussian
+environment, all methods perform comparably, and the distributional
+machinery correctly identifies that no additional tail protection is
+warranted. The framework therefore does not over-engineer solutions in
+regimes where simpler approaches suffice. The picture changes substantially
+once price risk becomes severe and unpredictable, whether through
+discontinuous jumps in simulation or through the complex microstructure of
+real equity markets. Standard reinforcement learning methods such as DQN
+and DDQN learn effective execution policies that outperform rule-based
+benchmarks on average, yet they remain blind to the shape of the cost
+distribution; they occasionally discover aggressive strategies that perform
+well most of the time but produce costly failures in the tail. IQN, by
+contrast, learns the full distribution of execution outcomes, and this
+richer representation translates directly into more reliable execution: it
+attains an average cost comparable to that of DQN and DDQN while delivering
+meaningfully tighter control over worst-case scenarios.
+
+The CVaR distortion mechanism amplifies this advantage. By restricting the
+set of quantiles consulted during action selection, a modification that
+requires neither retraining nor additional computation, IQN-CVaR converts a
+competent execution policy into an exceptionally predictable one. On real
+market data, this single adjustment removes the majority of the tail risk
+that remains under the risk-neutral IQN policy.
+
+Three implications for institutional execution follow from these findings.
+First, the mean--risk tradeoff is economically favourable: IQN-CVaR incurs
+a modest premium in average cost relative to TWAP while eliminating the
+majority of tail risk, and is therefore attractive for any desk on which
+worst-case cost outweighs average cost. Second, the CVaR parameter
+$\alpha$ functions as a real-time risk dial. A single pre-trained model can
+be deployed once and $\alpha$ adjusted online to match prevailing market
+conditions or client risk tolerance, without retraining or recalibration;
+this constitutes an operational advantage over risk-sensitive RL methods
+that require separate training for each risk level. Third, the framework
+is self-calibrating with respect to market regime: under benign conditions
+with thin-tailed cost distributions, the CVaR mechanism reduces to
+near-risk-neutral behaviour, whereas under turbulent conditions with heavy
+tails, it becomes automatically more protective. The trader is therefore
+not required to determine when to activate risk controls.
+
+% \subsection*{Limitations and Future Work}
+
+% Several limitations of this study suggest directions for future research.  First, our empirical evaluation is based on a single year of data (2014) for a single highly liquid equity (AAPL).  While the results are encouraging, extending the analysis to multiple years and to less liquid securities would strengthen the generalisability of our conclusions.  Our preliminary experiments on lower-volume stocks (e.g., GOOG) suggest that the penalty coefficient $a$ may require liquidity-dependent calibration, an issue that merits systematic investigation.
+
+% Second, the current framework uses a discrete action space with six actions.  While this is sufficient for the execution problem studied here, finer action granularity or continuous action spaces --- potentially via policy gradient methods combined with distributional critics --- could improve execution quality for longer horizons or more complex order types.
+
+% Third, our impact model assumes a linear temporary impact function.  Incorporating nonlinear or state-dependent impact models, potentially learned jointly with the execution policy, could better capture the complex dynamics of real limit order books.
+
+% Fourth, while we focused on the single-asset liquidation problem, multi-asset portfolio execution presents additional challenges including cross-asset impact and correlation structure.  Extending the distributional RL framework to portfolio execution is a natural and practically relevant direction.
+
+% Finally, the connection between distributional RL and coherent risk measures opens broader possibilities beyond CVaR.  Exploring alternative distortion risk measures --- such as spectral risk measures or distortion functions tailored to specific institutional mandates --- could further enrich the toolkit available to algorithmic traders.
+
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+\end{document}

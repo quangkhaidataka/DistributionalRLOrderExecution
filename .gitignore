@@ -1,0 +1,20 @@
+# Files intentionally excluded from the repository
+
+# Archived / unused code (kept locally, not pushed)
+unnecessary_files/
+
+# Large data files (regenerate via loaders / WRDS)
+data/processed/
+data/raw/
+
+# Generated experiment outputs and model checkpoints
+results/
+results_regime_50000_10000/
+*.pt
+
+# Python
+__pycache__/
+*.py[cod]
+
+# OS / editor
+.DS_Store

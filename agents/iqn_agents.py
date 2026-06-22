@@ -66,7 +66,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from networks.iqn_network import IQNNetwork, NetworkConfig
+from networks.iqn_networks import IQNNetwork, NetworkConfig
 from training.replay_buffer import ReplayBuffer, ReplayConfig
 
 
@@ -90,7 +90,7 @@ class AgentConfig:
     lr               : float = 1e-4    # Adam learning rate
     gamma            : float = 0.99    # discount factor
     batch_size       : int   = 64      # minibatch size
-    target_update_freq: int  = 100     # hard target update every N steps
+    target_update_freq: int  = 500     # hard target update every N steps
     grad_clip_norm   : float = 10.0    # gradient clipping (stability)
 
     # --- Quantile sampling ---
@@ -102,15 +102,19 @@ class AgentConfig:
     # --- Exploration ---
     epsilon_start    : float = 1.0
     epsilon_end      : float = 0.01
-    epsilon_decay_steps: int = 10_000  # linear decay over this many steps
+    epsilon_decay_steps: int = 50_000  # linear decay over this many steps
 
     # --- Replay buffer ---
     replay_capacity  : int   = 50_000
-    replay_min_size  : int   = 1_000
+    replay_min_size  : int   = 256
 
     # --- Network ---
-    hidden_dim       : int   = 128
-    cos_embedding_dim: int   = 64
+    # hidden_dim       : int   = 128
+    # cos_embedding_dim: int   = 64
+    # n_hidden_layers  : int   = 2
+
+    hidden_dim       : int   = 64
+    cos_embedding_dim: int   = 32
     n_hidden_layers  : int   = 2
 
     @property
@@ -238,14 +242,14 @@ class IQNAgent:
             return np.random.randint(0, self.n_actions)
 
         # Greedy: use CVaR_alpha range for action selection
-        state_t = torch.FloatTensor(state).to(self.device)
-        q_values = self.online_net.get_action_values(
-            state    = state_t,
-            n_tau    = self.cfg.n_tau_policy,
-            tau_low  = 0.0,
-            tau_high = self.cfg.cvar_alpha,   # KEY: 1.0 for neutral, α for CVaR
-        )                                      # q_values: (1, A)
-
+        with torch.no_grad():
+            state_t = torch.FloatTensor(state).to(self.device)
+            q_values = self.online_net.get_action_values(
+                state=state_t,
+                n_tau=self.cfg.n_tau_policy,
+                tau_low=0.0,
+                tau_high=self.cfg.cvar_alpha,
+            )
         return int(q_values.argmax(dim=-1).item())
 
     # ------------------------------------------------------------------
