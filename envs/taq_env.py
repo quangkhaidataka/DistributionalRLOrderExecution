@@ -183,34 +183,18 @@ class TAQEnv:
         row = self.data.iloc[row_idx]
 
         mid = float(row['mid_price'])
-        spread = float(row['spread'])
 
-        # Execution price: Ning et al. (2021) approach
-        # Sell at mid - half_spread - temporary_impact
-        # temporary_impact = eta * (x_t / avg_vol)
-        if x_t > 1e-8:
-            half_spread = spread / 2.0
-            impact = cfg.eta * (x_t / (self.avg_vol + 1e-8))
-            p_exec = mid - half_spread - impact
-        else:
-            p_exec = mid
-
-        # Reward: IS contribution - quadratic penalty
-        q0 = float(cfg.q0)
-        is_contrib = x_t * (p_exec - self._p0) / (self._p0 * q0 + 1e-12)
-        penalty = cfg.a * (x_t / (q0 + 1e-12)) ** 2
-        reward = is_contrib - penalty
-
-        # With:
-        # Execution price: mid-price with temporary impact
+        # Fill model: execute at the mid-price minus a linear temporary impact
+        # (p_exec = mid - eta * x_t). (N9: the half-spread "Ning et al." variant
+        # that preceded this was dead code — it was always overwritten by this
+        # block — so it has been removed; runtime behavior is unchanged.)
         if x_t > 1e-8:
             impact = cfg.eta * x_t
             p_exec = mid - impact
         else:
             p_exec = mid
 
-        # Reward: IS-based (same as simulation setting)
-        # r_t = x_t * (p_exec - p0) / (p0 * q0) - a * (x_t / q0)^2
+        # Reward: r_t = x_t * (p_exec - p0) / (p0 * q0) - a * (x_t / q0)^2
         q0 = float(cfg.q0)
         is_contrib = x_t * (p_exec - self._p0) / (self._p0 * q0 + 1e-12)
         penalty = cfg.a * (x_t / (q0 + 1e-12)) ** 2
