@@ -25,8 +25,8 @@ import numpy as np
 import torch
 import tempfile
 
-from networks.iqn_network  import IQNNetwork, NetworkConfig
-from agents.iqn_agent      import IQNAgent, AgentConfig
+from networks.iqn_networks import IQNNetwork, NetworkConfig
+from agents.iqn_agents     import IQNAgent, AgentConfig
 from training.replay_buffer import ReplayBuffer, ReplayConfig
 
 PASS = '✓'
@@ -157,7 +157,7 @@ try:
     agent_cvar.online_net.load_state_dict(agent_neutral.online_net.state_dict())
     agent_cvar.online_net.eval()
 
-    state = torch.randn(STATE_DIM).numpy()
+    state = np.asarray(torch.randn(STATE_DIM).tolist(), dtype=np.float32)
 
     # With enough τ samples, actions SHOULD differ for CVaR vs neutral
     # (especially with extreme alpha=0.25)

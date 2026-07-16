@@ -36,7 +36,7 @@ from agents.baselines import (
 )
 
 PASS = '✓'; FAIL = '✗'; results = []
-STATE_DIM = 6; N_ACTIONS = 5; DEVICE = torch.device('cpu')
+STATE_DIM = 5; N_ACTIONS = 6; DEVICE = torch.device('cpu')   # P1-T5: 5-D state, 6 actions
 
 def check(name, cond, detail=''):
     s = PASS if cond else FAIL
@@ -47,10 +47,10 @@ def section(title):
     print(f"\n{'─'*62}\n  {title}\n{'─'*62}")
 
 # ── helpers ──────────────────────────────────────────────────────────────────
-def make_state(t_frac=0.0, q_frac=1.0, dp=0.0, spread=0.0002, imb=0.0, rv=1.0):
-    return np.array([t_frac, q_frac, dp, spread, imb, rv], dtype=np.float32)
+def make_state(t_frac=0.0, q_frac=1.0, dp=0.0, spread=0.0002, imb=0.0):
+    return np.array([t_frac, q_frac, dp, spread, imb], dtype=np.float32)  # 5-D state
 
-def make_cfg(N=10, q0=100_000, T=60.0):
+def make_cfg(N=5, q0=100_000, T=60.0):
     return EnvConfig(N=N, q0=q0, T=T, p0=100.0, eta=2.5e-6, gamma=2.5e-7,
                      sigma=0.00095)
 
@@ -74,7 +74,7 @@ agents_list = [
 for agent in agents_list:
     state = make_state()
     action = agent.select_action(state, eval_mode=True)
-    check(f"{agent.name}: action in {{0..4}}",
+    check(f"{agent.name}: action in {{0..5}}",
           0 <= action < N_ACTIONS, f"action={action}")
     check(f"{agent.name}: update() returns None or float",
           agent.update() is None or isinstance(agent.update(), (float, type(None))))
@@ -85,7 +85,7 @@ for agent in agents_list:
 section("2 — TWAP Agent Correctness")
 
 try:
-    cfg_ac  = SimConfig(N=10, q0=100_000, T=60.0, p0=100.0,
+    cfg_ac  = SimConfig(N=5, q0=100_000, T=60.0, p0=100.0,
                         eta=2.5e-6, gamma=2.5e-7, sigma=0.00095)
     env = AlmgrenChrissEnv(cfg_ac); env.seed(0)
     twap = TWAPAgent(cfg_ac)
@@ -264,6 +264,14 @@ try:
     ddqn2.online_net.load_state_dict(dqn2.online_net.state_dict())
     ddqn2.target_net.load_state_dict(dqn2.target_net.state_dict())
 
+    # Diverge DDQN's ONLINE net from its (lagging) target net, as happens during
+    # real DDQN training. Without this, online == target here, so the online-argmax
+    # vs target-argmax selection can never differ and the check below is vacuous.
+    torch.manual_seed(1)
+    with torch.no_grad():
+        for p in ddqn2.online_net.parameters():
+            p.add_(torch.randn_like(p) * 0.5)
+
     B = 64
     torch.manual_seed(42)
     big_batch = {
@@ -344,7 +352,7 @@ section("9 — QR-DQN Fixed Quantile Levels (Midpoint Rule)")
 
 try:
     N_Q   = 8
-    taus  = qrdqn.online_net.taus.numpy()
+    taus  = np.asarray(qrdqn.online_net.taus.tolist())   # .tolist() avoids torch->numpy ABI break
     expected = (2 * np.arange(1, N_Q+1) - 1) / (2 * N_Q)
     check("τ_i = (2i-1)/(2N) midpoint rule",
           np.allclose(taus, expected, atol=1e-6),
@@ -412,7 +420,7 @@ except Exception as e:
 section("11 — Full Episode Liquidation (Rule-Based Agents)")
 
 try:
-    cfg_sim = SimConfig(N=10, q0=100_000, T=60.0, p0=100.0,
+    cfg_sim = SimConfig(N=5, q0=100_000, T=60.0, p0=100.0,
                         eta=2.5e-6, gamma=2.5e-7, sigma=0.00095)
 
     for AgentClass, kwargs in [
