@@ -1,31 +1,27 @@
 # =============================================================================
-# sim_config.yaml
+# sim_config.yaml  —  REFERENCE ONLY, NOT LOADED BY ANY CODE (see PLAN.md D4)
 # =============================================================================
-# Simulated environment hyperparameters for Phase 1 experiments.
+# The run scripts do NOT read this file. The authoritative source of truth is:
+#   - EnvConfig / SimConfig dataclasses in envs/base_env.py & envs/simulated_env.py
+#   - the hardcoded DEFAULT_SIM_CONFIG dict in experiments/run_simulation.py
+# Every value below is kept in sync with those dataclass defaults so this file
+# is honest documentation, but editing it changes nothing at runtime.
 #
-# This file is the single source of truth for all simulation parameters.
-# Both AlmgrenChrissEnv and RegimeSwitchingEnv read from this file.
-#
-# Calibration source:
-#   - Market impact: Almgren et al. (2005), "Optimal execution with
-#     nonlinear impact functions and trading-enhanced risk"
-#   - Volatility: median 1-min realised vol for AAPL 2019-2021
-#   - Regime parameters: estimated from AAPL intraday vol clustering
-#
-# To reproduce Table 3 in the paper, do not change these defaults.
+# Known runtime overrides applied by run_simulation.py's DEFAULT_SIM_CONFIG:
+#   - ou_theta = 0.15  (SimConfig dataclass default is 0.4)
+#   - jump_intensity/mean/std as in the "jump_diffusion" section below
 # =============================================================================
 
 
 # ---------------------------------------------------------------------------
-# Shared environment parameters (inherited by both models)
-# These correspond to EnvConfig fields in envs/base_env.py
+# Shared environment parameters (EnvConfig / SimConfig)
 # ---------------------------------------------------------------------------
 environment:
 
   # Execution horizon
-  N: 5                     # number of decision periods
-  T: 60.0                   # total horizon in minutes (N periods × dt minutes)
-                            # dt = T / N = 6 minutes per period
+  N: 5                      # number of decision periods
+  T: 60.0                   # total horizon in minutes
+                            # dt = T / N = 12 minutes per period
 
   # Inventory
   q0: 100000                # initial shares to liquidate
@@ -36,57 +32,49 @@ environment:
   #   Permanent impact:  p_{t+1} = p_t - gamma * x_t + noise
   eta: 2.5e-6               # temporary impact coefficient
   gamma: 2.5e-7             # permanent impact coefficient
-  a: 0.001                    # quadratic penalty coefficient (AC formula)
+  a: 0.001                  # quadratic trade-penalty coefficient
+  penalty_type: quadratic   # 'quadratic' or 'linear'
 
-  # Volatility
-  sigma: 0.00095            # per-period price volatility (σ)
-                            # annualised ≈ σ × √(252 × 65) ≈ 12%
+  # Volatility (per-period, in DOLLARS: the diffusion term is sigma*sqrt(dt)
+  # added to a ~$100 price, i.e. an absolute-dollar increment, not a return).
+  sigma: 0.00095
 
-  # MDP parameters
-  discount: 0.99            # γ in Bellman equation (close to 1 for 10-step horizon)
-  # rv_window: 5              # rolling window for realised vol state feature σ̂_t
+  # MDP
+  discount: 0.99            # gamma in the Bellman equation
 
 
 # ---------------------------------------------------------------------------
-# Regime-switching parameters (RegimeSwitchingEnv only)
-# These extend SimConfig in envs/simulated_env.py
+# Jump-diffusion parameters (JumpDiffusionEnv) — STRESS SCENARIO
+# P1-T3/D3: intensity is PER PERIOD (Poisson rate used directly, no *dt).
+#   E[jumps/episode] = jump_intensity * N = 0.15,  P(>=1 jump/episode) ~ 14%.
+#   Each jump ~ N(mu_J, sigma_J^2) in dollars; mu_J = -0.30 ~ -30 bps on p0=100.
+# ---------------------------------------------------------------------------
+jump_diffusion:
+  jump_intensity: 0.03      # lambda_J: expected jumps per period
+  jump_mean: -0.30          # mu_J: mean jump size in dollars (adverse)
+  jump_std: 0.40            # sigma_J: jump size volatility in dollars
+
+
+# ---------------------------------------------------------------------------
+# Mean-reverting parameters (MeanRevertingEnv, OU price)
+# ---------------------------------------------------------------------------
+mean_reverting:
+  ou_theta: 0.4             # mean-reversion speed (SimConfig default; run
+                            # scripts override to 0.15 via DEFAULT_SIM_CONFIG)
+  ou_mu: 100.0              # long-term mean price (= p0)
+
+
+# ---------------------------------------------------------------------------
+# Regime-switching parameters (RegimeSwitchingEnv)
+# NOTE: RegimeSwitchingEnv still exists and is exercised by tests/run_tests.py,
+# but experiments/run_simulation.py runs {ac, mean_reverting, jump_diffusion}
+# only — it does NOT run the regime-switching env.
 # ---------------------------------------------------------------------------
 regime_switching:
-
-  # Two-state hidden Markov volatility model
-  #   Normal regime:  σ_low  ≈ 0.8× baseline vol
-  #   Stress regime:  σ_high ≈ 3.0× baseline vol
-  sigma_low: 0.0005         # normal regime volatility per period
-  sigma_high: 0.008         # stress regime volatility per period
-
-  # Transition probabilities (per decision period)
-  #   P(normal → stress) = p_01 = 0.05  →  E[normal duration] = 20 periods
-  #   P(stress → normal) = p_10 = 0.30  →  E[stress duration] = 3.3 periods
-  #   Stationary distribution: P(stress) ≈ p_01/(p_01+p_10) ≈ 14%
-  p_01: 0.15                # normal → stress transition probability
-  p_10: 0.40                # stress → normal transition probability
-
-  # Simulated LOB features
-  #   Spread: modelled as proportional to volatility with additive noise
-  #   Imbalance: mean-reverting OU process (captures microstructure)
-  spread_base: 0.02         # base spread as fraction of price
-  spread_noise: 0.3         # multiplicative noise level on spread
-  imb_mean_rev: 0.5         # imbalance mean-reversion speed (OU κ)
-
-
-# ---------------------------------------------------------------------------
-# Usage example
-# ---------------------------------------------------------------------------
-# from envs import AlmgrenChrissEnv, RegimeSwitchingEnv, SimConfig
-# import yaml
-#
-# with open('configs/sim_config.yaml') as f:
-#     raw = yaml.safe_load(f)
-#
-# # Phase 1A: Almgren-Chriss
-# cfg_ac = SimConfig(**raw['environment'])
-# env_ac = AlmgrenChrissEnv(cfg_ac)
-#
-# # Phase 1B: Regime-Switching
-# cfg_rs = SimConfig(**raw['environment'], **raw['regime_switching'])
-# env_rs = RegimeSwitchingEnv(cfg_rs)
+  sigma_low: 0.0005         # normal-regime volatility per period
+  sigma_high: 0.008         # stress-regime volatility per period
+  p_01: 0.15                # P(normal -> stress) per period
+  p_10: 0.40                # P(stress -> normal) per period
+  spread_base: 0.02         # base spread as a fraction of price
+  spread_noise: 0.3         # multiplicative spread noise level
+  imb_mean_rev: 0.5         # imbalance OU mean-reversion speed
