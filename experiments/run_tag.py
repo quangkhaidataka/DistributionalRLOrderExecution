@@ -32,6 +32,7 @@ import torch
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # experiments/ (exp_utils)
 
 from envs.taq_env import TAQEnv, TAQConfig
 from envs.base_env import EnvConfig
@@ -45,6 +46,7 @@ from evaluation.metrics import (
     EpisodeTracker, format_comparison_table, format_table_row,
 )
 from evaluation.visualizer import Visualizer
+from exp_utils import dump_config_json
 
 
 # ============================================================================
@@ -71,6 +73,7 @@ EVAL_FREQ       = 1_000
 CHECKPOINT_FREQ = 1_000
 SEED            = 42
 DEVICE          = 'cpu'   # P1-T7: torch device — 'cpu' (default) or 'mps'
+OUT_ROOT        = 'results'   # P2-T6: output root ('results/_smoke' for --smoke)
 
 # Validation & test
 N_VAL_EVAL  = 300
@@ -276,8 +279,9 @@ def share_iqn_weights(agents):
 
 def run():
     cfg = build_taq_config()
-    out_dir = Path('results') / 'taq' / STOCK
+    out_dir = Path(OUT_ROOT) / 'taq' / STOCK
     out_dir.mkdir(parents=True, exist_ok=True)
+    dump_config_json(cfg, out_dir / 'config.json')   # P2-T6
 
     # Load all dates from the parquet
     parquet_path = Path(cfg.data_dir) / f'{cfg.stock}_{cfg.year}.parquet'
@@ -520,6 +524,8 @@ if __name__ == '__main__':
                    help='Test episodes per fold')
     p.add_argument('--device', type=str, default='cpu', choices=['cpu', 'mps'],
                    help='Torch device (cpu default; mps for Apple Silicon GPU)')
+    p.add_argument('--smoke', action='store_true',
+                   help='Smoke run: 100 episodes, tiny eval, into results/_smoke')
     args = p.parse_args()
 
     if args.stock:
@@ -529,5 +535,14 @@ if __name__ == '__main__':
     if args.eval_episodes:
         N_TEST_EVAL = args.eval_episodes
     DEVICE = args.device
+
+    if args.smoke:
+        N_EPISODES = 100
+        EVAL_FREQ = 50
+        CHECKPOINT_FREQ = 50
+        N_VAL_EVAL = 50
+        N_TEST_EVAL = 200
+        OUT_ROOT = 'results/_smoke'
+        print('  [--smoke] 100 episodes, test 200 -> results/_smoke/taq')
 
     run()

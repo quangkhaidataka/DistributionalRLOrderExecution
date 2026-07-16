@@ -59,6 +59,7 @@ import numpy as np
 # Ensure project root is on sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # experiments/ (exp_utils)
 
 
 from envs import (
@@ -76,6 +77,7 @@ from evaluation.metrics import (
     format_comparison_table, format_table_row,
 )
 from evaluation.visualizer import Visualizer
+from exp_utils import dump_config_json
 
 
 # ============================================================================
@@ -699,19 +701,30 @@ def parse_args() -> argparse.Namespace:
                    help='Checkpoint directory for --eval-only')
     p.add_argument('--device', type=str, default='cpu', choices=['cpu', 'mps'],
                    help='Torch device (cpu default; mps for Apple Silicon GPU)')
+    p.add_argument('--smoke', action='store_true',
+                   help='Smoke run: 100 episodes, tiny eval, into results/_smoke')
     return p.parse_args()
 
 
 def main():
     args = parse_args()
 
+    if args.smoke:
+        args.episodes = 100
+        args.eval_episodes = 200
+        args.eval_freq = 50
+        args.results_dir = 'results/_smoke'
+        print('  [--smoke] 100 episodes, eval 200, eval_freq 50 -> results/_smoke')
+
     results_dir = Path(args.results_dir)
     sim_config  = SimConfig(**DEFAULT_SIM_CONFIG)
 
-    # Save config for reproducibility
-    (results_dir / 'logs').mkdir(parents=True, exist_ok=True)
-    with open(results_dir / 'logs' / 'sim_config.json', 'w') as f:
-        json.dump(asdict(sim_config), f, indent=2)
+    # Save config for reproducibility (shared helper — dumps + mkdirs)
+    dump_config_json(sim_config, results_dir / 'logs' / 'sim_config.json')
+    dump_config_json({'episodes': args.episodes, 'eval_episodes': args.eval_episodes,
+                      'eval_freq': args.eval_freq, 'seed': args.seed,
+                      'device': args.device, 'env': args.env, 'smoke': args.smoke},
+                     results_dir / 'logs' / 'run_config.json')
 
     envs_to_run = []
     # if args.env in ('ac', 'both'):
