@@ -387,7 +387,9 @@ class DeepRLConfig:
     replay_min_size  : int   = 256
 
     # Network architecture (matches IQN's for fair comparison)
-    hidden_dim       : int   = 128
+    # P1-T1/D1: unified to hidden_dim=64 so DQN/DDQN share IQN's 2-layer
+    # LayerNorm+ReLU backbone. Gives 5,190 trainable params (vs IQN's 11,462).
+    hidden_dim       : int   = 64
     n_hidden_layers  : int   = 2
 
     # QR-DQN specific
@@ -563,6 +565,10 @@ class _DeepRLBase(BaseAgent):
         if torch.backends.mps.is_available(): return torch.device('mps')
         if torch.cuda.is_available():         return torch.device('cuda')
         return torch.device('cpu')
+
+    def get_num_params(self) -> int:
+        """Trainable parameter count (matches IQNAgent.get_num_params)."""
+        return sum(p.numel() for p in self.online_net.parameters())
 
     def save(self, path: str) -> None:
         torch.save({'online_net': self.online_net.state_dict(),

@@ -70,6 +70,7 @@ from agents.baselines import (
     TWAPAgent, AlmgrenChrissAgent, DQNAgent, DDQNAgent,
     QRDQNAgent, DeepRLConfig,
 )
+from agents.param_utils import expected_counts, assert_param_count
 from evaluation.metrics import (
     MetricsSuite, EpisodeTracker,
     format_comparison_table, format_table_row,
@@ -285,6 +286,12 @@ def build_agents(
         agents[name] = IQNAgent(
             iqn_cfg_cvar, state_dim, n_actions, device=device, seed=seed + 3,
         )
+
+    # P1-T2/D1: param-count guard — fails loudly if architecture drifts.
+    exp_iqn, exp_mlp = expected_counts(state_dim, n_actions)
+    for name, agent in agents.items():
+        if hasattr(agent, 'get_num_params'):
+            assert_param_count(agent, exp_iqn if name.startswith('IQN') else exp_mlp, name)
 
     return agents
 

@@ -29,6 +29,7 @@ from agents.baselines import (
     TWAPAgent, AlmgrenChrissAgent,
     DQNAgent, DDQNAgent, DeepRLConfig,
 )
+from agents.param_utils import expected_counts, assert_param_count
 from evaluation.metrics import EpisodeTracker, format_comparison_table
 
 
@@ -87,6 +88,11 @@ def run_eval(stock: str, n_eval: int):
 
     iqn_cfg = AgentConfig(cvar_alpha=1.0)
     agents['IQN-neutral'] = IQNAgent(iqn_cfg, state_dim, n_actions, device=device, seed=SEED+3)
+
+    # P1-T2/D1: param-count guard on freshly-built agents (before loading ckpts).
+    exp_iqn, exp_mlp = expected_counts(state_dim, n_actions)
+    for name in ['DQN', 'DDQN', 'IQN-neutral']:
+        assert_param_count(agents[name], exp_iqn if name.startswith('IQN') else exp_mlp, name)
 
     # Load checkpoints
     for name in ['DQN', 'DDQN', 'IQN-neutral']:

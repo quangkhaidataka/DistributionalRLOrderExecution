@@ -485,6 +485,10 @@ class IQNAgent:
     def _count_params(self) -> int:
         return sum(p.numel() for p in self.online_net.parameters())
 
+    def get_num_params(self) -> int:
+        """Trainable parameter count (public alias; matches _DeepRLBase)."""
+        return self._count_params()
+
     def save(self, path: str) -> None:
         """Save model checkpoint."""
         torch.save({
