@@ -5,13 +5,16 @@ Clean public API for the environments module.
 Import from here, not from submodules directly.
 
 Usage:
-    from envs import AlmgrenChrissEnv, RegimeSwitchingEnv, LobsterEnv
-    from envs import SimConfig, LobsterConfig, EnvConfig
+    from envs import AlmgrenChrissEnv, JumpDiffusionEnv, MeanRevertingEnv
+    from envs import SimConfig, EnvConfig
+    from envs.taq_env import TAQEnv, TAQConfig
 """
 
 from envs.base_env        import BaseExecutionEnv, EnvConfig, ACTION_FRACS, N_ACTIONS
 from envs.simulated_env   import AlmgrenChrissEnv, RegimeSwitchingEnv, SimConfig
-from envs.lobster_env     import LobsterEnv, LobsterConfig, LOBSTERLoader
+# P1-T0: lobster_env.py was moved to unnecessary_files/ and is not part of the
+# sim/TAQ pipeline. Importing it here broke every `from envs ...` import.
+# from envs.lobster_env     import LobsterEnv, LobsterConfig, LOBSTERLoader
 from envs.simulated_env import JumpDiffusionEnv
 # Add to imports:
 from envs.simulated_env import MeanRevertingEnv
@@ -24,10 +27,8 @@ __all__ = [
     'N_ACTIONS',
     # Simulated
     'AlmgrenChrissEnv',
+    'MeanRevertingEnv',
+    'JumpDiffusionEnv',
     'RegimeSwitchingEnv',
     'SimConfig',
-    # Real data
-    'LobsterEnv',
-    'LobsterConfig',
-    'LOBSTERLoader',
 ]
