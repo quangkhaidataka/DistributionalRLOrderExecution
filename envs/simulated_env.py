@@ -58,10 +58,13 @@ class SimConfig(EnvConfig):
     ou_theta    : float = 0.4     # mean-reversion speed
     ou_mu       : float = 100.0   # long-term mean price (= p0)
 
-    # --- Jump-diffusion parameters (Model 3: Merton) ---
-    jump_intensity : float = 0.3    # λ: expected jumps per period (Poisson rate)
-    jump_mean      : float = -0.002 # μ_J: mean jump size (negative = adverse)
-    jump_std       : float = 0.005  # σ_J: jump size volatility
+    # --- Jump-diffusion parameters (Merton compound-Poisson STRESS scenario) ---
+    # P1-T3/D3: intensity is PER PERIOD (used directly as the Poisson rate, no ·dt).
+    # Rare-but-large adverse jumps: E[jumps/episode] = λ_J·N = 0.15,
+    # P(≥1 jump/episode) ≈ 14%; each jump ≈ -30 bps on p0=100.
+    jump_intensity : float = 0.03   # λ_J: expected jumps per period (Poisson rate)
+    jump_mean      : float = -0.30  # μ_J: mean jump size in $ (-30 bps on p0=100)
+    jump_std       : float = 0.40   # σ_J: jump size volatility in $
 
 
 # ---------------------------------------------------------------------------
@@ -171,30 +174,35 @@ class MeanRevertingEnv(AlmgrenChrissEnv):
 
 class JumpDiffusionEnv(AlmgrenChrissEnv):
     """
-    Execution environment with Merton jump-diffusion price dynamics.
+    Execution environment with Merton jump-diffusion price dynamics —
+    a STRESS-TEST scenario with rare, large, adverse price dislocations.
 
     Price dynamics:
         p_{t+1} = p_t - γ·x_t + σ·√dt·ξ_t + Σ_{k=1}^{N_t} J_k
 
     where:
-        N_t ~ Poisson(λ·dt)        number of jumps in period
-        J_k ~ N(μ_J, σ_J²)        jump sizes (negative mean = adverse)
+        N_t ~ Poisson(λ_J)        number of jumps in period t (PER-PERIOD rate)
+        J_k ~ N(μ_J, σ_J²)        jump sizes in $ (μ_J < 0 = adverse)
 
-    Key property:
-        Creates fat-tailed IS distribution even with N=5 periods.
-        Most episodes: normal Gaussian IS (no jumps).
-        ~26% of episodes: at least one jump → IS spike.
-        This is exactly where IQN-CVaR should outperform:
-        it learns the bimodal return distribution and avoids
-        actions that expose it to jump risk.
+    Calibration (P1-T3/D3) — a rare-but-large stress regime:
+        λ_J = 0.03 per period  →  E[jumps/episode] = λ_J·N = 0.15,
+                                  P(≥1 jump/episode) ≈ 14%.
+        μ_J = -0.30 $, σ_J = 0.40 $  →  each jump ≈ -30 bps on p0 = 100.
+        The Poisson rate is used PER PERIOD (no ·dt scaling): the previous
+        `Poisson(λ·dt)` with dt=12 inflated it ~12× (≈18 jumps/episode),
+        turning rare jumps into a near-constant adverse drift.
 
-    TWAP/AC cannot adapt to jumps — they follow a fixed schedule.
-    IQN can learn to sell more conservatively when spread widens
-    (spread spikes during jumps), protecting against tail events.
+    This yields a fat-tailed IS distribution: most episodes are Gaussian
+    (no jumps), a minority carry a large tail loss — precisely where
+    IQN-CVaR should outperform, by learning the bimodal return
+    distribution and avoiding jump-exposed actions. TWAP/AC follow a
+    fixed schedule and cannot adapt.
 
-    Reference:
-        Merton (1976), "Option pricing when underlying stock
-        returns are discontinuous"
+    References:
+        Merton (1976), "Option pricing when underlying stock returns
+        are discontinuous."
+        Moazeni, Coleman & Li (2013), "Optimal execution under jump
+        models for uncertain price impact" — jump/impact stress scenarios.
     """
 
     def _evolve_price(self, x_t: float) -> float:
@@ -207,8 +215,10 @@ class JumpDiffusionEnv(AlmgrenChrissEnv):
         diffusion        = self.cfg.sigma * np.sqrt(dt)
         noise            = self._rng.standard_normal()
 
-        # Poisson jumps
-        n_jumps = self._rng.poisson(self.cfg.jump_intensity * dt)
+        # Poisson jumps — P1-T3/D3: jump_intensity is the PER-PERIOD rate.
+        # Do NOT multiply by dt: the previous `* dt` (dt=12) inflated the rate
+        # ~12× (≈18 jumps/episode), turning rare jumps into a constant drift.
+        n_jumps = self._rng.poisson(self.cfg.jump_intensity)
         jump_total = 0.0
         if n_jumps > 0:
             jumps = self._rng.normal(

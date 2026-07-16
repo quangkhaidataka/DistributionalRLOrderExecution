@@ -94,9 +94,10 @@ DEFAULT_SIM_CONFIG = dict(
     discount= 0.99,
     ou_theta= 0.15,
     ou_mu   = 100.0,
-    jump_intensity = 0.3,
-    jump_mean      = -0.002,
-    jump_std       = 0.005)
+    # P1-T3/D3: recalibrated jump-diffusion stress scenario (per-period rate).
+    jump_intensity = 0.03,
+    jump_mean      = -0.30,
+    jump_std       = 0.40)
 
 # Training
 DEFAULT_TRAIN = dict(

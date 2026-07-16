@@ -266,6 +266,62 @@ print(f"\n  Total reward: {total:+.6f}")
 check("Episode ran without errors", True)
 
 # ---------------------------------------------------------------
+# Section 7: Jump-diffusion rate (P1-T3)
+#   Verifies the jump intensity is applied PER PERIOD (no ·dt inflation)
+#   and that the recalibrated defaults give a rare-jump regime.
+# ---------------------------------------------------------------
+run_section("7 — Jump-Diffusion Rate (P1-T3)")
+
+try:
+    from envs import JumpDiffusionEnv
+
+    class _SpyRng:
+        """Wrap a numpy Generator, recording every poisson(λ) draw."""
+        def __init__(self, rng):
+            self._r = rng
+            self.poisson_draws = []
+        def poisson(self, lam, *a, **k):
+            v = self._r.poisson(lam, *a, **k)
+            self.poisson_draws.append(int(v))
+            return v
+        def __getattr__(self, name):
+            return getattr(self._r, name)
+
+    jd_cfg = SimConfig()               # recalibrated jump defaults (λ_J per period)
+    jd = JumpDiffusionEnv(jd_cfg)
+    jd.seed(2024)
+    spy = _SpyRng(jd._rng)
+    jd._rng = spy
+
+    N_EP = 20000
+    ep_jumps = []
+    for _ in range(N_EP):
+        jd.reset()
+        start = len(spy.poisson_draws)
+        done = False
+        while not done:
+            _, _, done, _ = jd.step(0)
+        ep_jumps.append(sum(spy.poisson_draws[start:]))
+
+    ep_jumps = np.array(ep_jumps)
+    e_jumps  = float(ep_jumps.mean())
+    p_ge1    = float((ep_jumps >= 1).mean())
+    expected = jd_cfg.jump_intensity * jd_cfg.N
+
+    check("E[jumps/episode] ≈ λ_J·N (±5%)",
+          abs(e_jumps - expected) / expected < 0.05,
+          f"E={e_jumps:.4f}, λ_J·N={expected:.4f}")
+    check("P(≥1 jump/episode) ∈ [0.10, 0.20] (rare-jump regime)",
+          0.10 <= p_ge1 <= 0.20,
+          f"P(≥1)={p_ge1:.3f}")
+    check("No ·dt inflation (E[jumps/ep] < 1, not ≈18)",
+          e_jumps < 1.0,
+          f"E={e_jumps:.4f}")
+except Exception as e:
+    check("Jump-diffusion rate", False, str(e))
+    traceback.print_exc()
+
+# ---------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------
 print(f"\n{'═'*55}")
