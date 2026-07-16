@@ -23,6 +23,7 @@ from envs.simulated_env import AlmgrenChrissEnv, JumpDiffusionEnv, SimConfig
 from envs.base_env import EnvConfig
 from agents.baselines import TWAPAgent, AlmgrenChrissAgent, DQNAgent, DDQNAgent, DeepRLConfig
 from agents.iqn_agents import IQNAgent, AgentConfig
+from agents.param_utils import expected_counts, assert_param_count
 from evaluation.metrics import EpisodeTracker, format_comparison_table
 
 import torch
@@ -102,11 +103,15 @@ def run(env_name: str):
     agents['DQN'] = DQNAgent(rl_cfg, state_dim, n_actions, device=device, seed=SEED)
     agents['DDQN'] = DDQNAgent(rl_cfg, state_dim, n_actions, device=device, seed=SEED+1)
 
-    if env_name == 'jump_diffusion':
-        iqn_cfg = AgentConfig(cvar_alpha=1.0, hidden_dim=128, cos_embedding_dim=64)
-    else:
-        iqn_cfg = AgentConfig(cvar_alpha=1.0)
+    # P1-T6: JD is retrained at the unified 64/32 architecture (D1), so the old
+    # per-env 128/64 branch is removed — all sim envs use unified checkpoints.
+    iqn_cfg = AgentConfig(cvar_alpha=1.0)
     agents['IQN-neutral'] = IQNAgent(iqn_cfg, state_dim, n_actions, device=device, seed=SEED+3)
+
+    # P1-T2/D1: param-count guard on freshly-built agents.
+    exp_iqn, exp_mlp = expected_counts(state_dim, n_actions)
+    for _n in ['DQN', 'DDQN', 'IQN-neutral']:
+        assert_param_count(agents[_n], exp_iqn if _n.startswith('IQN') else exp_mlp, _n)
 
     # Load specific checkpoints
     ckpt_map = CHECKPOINTS.get(env_name, {})
@@ -130,10 +135,7 @@ def run(env_name: str):
 
     # IQN-CVaR variants share weights
     for alpha in [0.90, 0.95]:
-        if env_name == 'jump_diffusion':
-            cvar_cfg = AgentConfig(cvar_alpha=alpha, hidden_dim=128, cos_embedding_dim=64)
-        else:
-            cvar_cfg = AgentConfig(cvar_alpha=alpha)
+        cvar_cfg = AgentConfig(cvar_alpha=alpha)
         name = f'IQN-CVaR_{alpha:.2f}'
         agents[name] = IQNAgent(cvar_cfg, state_dim, n_actions, device=device, seed=SEED+3)
         agents[name].online_net.load_state_dict(agents['IQN-neutral'].online_net.state_dict())
