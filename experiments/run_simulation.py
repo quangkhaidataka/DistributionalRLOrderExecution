@@ -228,6 +228,7 @@ def build_agents(
     n_actions  : int,
     seed       : int = 42,
     cvar_alphas: List[float] = None,
+    device_str : str = 'cpu',
 ) -> Dict[str, object]:
     """
     Construct all agents for the experiment.
@@ -240,11 +241,8 @@ def build_agents(
     The ONLY difference between them is the loss function / architecture.
     """
     import torch
-    device = torch.device('cpu')
-    # if torch.backends.mps.is_available():
-    #     device = torch.device('mps')
-    # elif torch.cuda.is_available():
-    #     device = torch.device('cuda')
+    # P1-T7: device is selectable via --device (default 'cpu' → unchanged behavior).
+    device = torch.device(device_str)
 
     if cvar_alphas is None:
         cvar_alphas = CVAR_ALPHAS
@@ -453,6 +451,7 @@ def run_phase(
     results_dir    : Path,
     eval_only      : bool = False,
     checkpoint_path: Optional[str] = None,
+    device         : str = 'cpu',
 ) -> None:
     """
     Run one complete experimental phase (AC or Regime-Switching).
@@ -498,7 +497,7 @@ def run_phase(
 
     # ── Step 2: Agents ────────────────────────────────────────
     print('\nBuilding agents...')
-    agents = build_agents(sim_config, state_dim, n_actions, seed=seed)
+    agents = build_agents(sim_config, state_dim, n_actions, seed=seed, device_str=device)
 
     # ── Step 3: Training ──────────────────────────────────────
     training_logs = {}
@@ -698,6 +697,8 @@ def parse_args() -> argparse.Namespace:
                    help='Skip training, load checkpoints and evaluate')
     p.add_argument('--checkpoint', type=str, default=None,
                    help='Checkpoint directory for --eval-only')
+    p.add_argument('--device', type=str, default='cpu', choices=['cpu', 'mps'],
+                   help='Torch device (cpu default; mps for Apple Silicon GPU)')
     return p.parse_args()
 
 
@@ -737,6 +738,7 @@ def main():
             results_dir     = results_dir,
             eval_only       = args.eval_only,
             checkpoint_path = args.checkpoint,
+            device          = args.device,
         )
 
     print('\n' + '=' * 60)

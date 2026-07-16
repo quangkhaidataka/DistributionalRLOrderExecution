@@ -70,6 +70,7 @@ N_EPISODES      = 50_000
 EVAL_FREQ       = 1_000
 CHECKPOINT_FREQ = 1_000
 SEED            = 42
+DEVICE          = 'cpu'   # P1-T7: torch device — 'cpu' (default) or 'mps'
 
 # Validation & test
 N_VAL_EVAL  = 300
@@ -104,11 +105,7 @@ def build_taq_config() -> TAQConfig:
 def build_all_agents(state_dim: int, n_actions: int, seed: int):
     """Build all agents including baselines and IQN variants."""
 
-    device = torch.device('cpu')
-    # if torch.backends.mps.is_available():
-    #     device = torch.device('mps')
-    # else:
-    #     device = torch.device('cpu')
+    device = torch.device(DEVICE)   # P1-T7: selectable via --device (default cpu)
     print(f'  Device: {device}')
 
     agents = {}
@@ -521,6 +518,8 @@ if __name__ == '__main__':
                    help='Training episodes per agent per fold')
     p.add_argument('--eval-episodes', type=int, default=None,
                    help='Test episodes per fold')
+    p.add_argument('--device', type=str, default='cpu', choices=['cpu', 'mps'],
+                   help='Torch device (cpu default; mps for Apple Silicon GPU)')
     args = p.parse_args()
 
     if args.stock:
@@ -529,5 +528,6 @@ if __name__ == '__main__':
         N_EPISODES = args.episodes
     if args.eval_episodes:
         N_TEST_EVAL = args.eval_episodes
+    DEVICE = args.device
 
     run()
