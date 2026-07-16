@@ -14,7 +14,7 @@ import traceback
 
 from envs import (
     AlmgrenChrissEnv, RegimeSwitchingEnv,
-    SimConfig, N_ACTIONS,
+    SimConfig, N_ACTIONS, ACTION_FRACS,
 )
 
 PASS = '✓'
@@ -48,9 +48,9 @@ try:
     state = ac.reset()
     check("reset() returns ndarray",   isinstance(state, np.ndarray))
     check("state dtype is float32",    state.dtype == np.float32)
-    check("state shape is (6,)",       state.shape == (6,),   str(state.shape))
-    check("state_dim == 6",            ac.state_dim == 6)
-    check("n_actions == 5",            ac.n_actions == 5)
+    check("state shape is (5,)",       state.shape == (5,),   str(state.shape))
+    check("state_dim == 5",            ac.state_dim == 5)
+    check("n_actions == 6",            ac.n_actions == 6)
 
     s, r, done, info = ac.step(2)
     check("step returns ndarray state",  isinstance(s, np.ndarray))
@@ -122,12 +122,12 @@ try:
         if done: break
     check("Inventory never negative", not neg_inventory)
 
-    # Action 2 (50%) halves inventory
+    # Action 2 sells ACTION_FRACS[2] (= 40%) of inventory
     ac.reset()
     q_before = ac.q
     ac.step(2)
-    check("Action=2 sells 50% of inventory",
-          abs(ac.q - q_before * 0.5) < 1.0,
+    check("Action=2 sells ACTION_FRACS[2] (40%) of inventory",
+          abs(ac.q - q_before * (1.0 - ACTION_FRACS[2])) < 1.0,
           f"{q_before:.0f}→{ac.q:.0f}")
 
     # Action 0 (0%) preserves inventory
@@ -230,7 +230,7 @@ try:
     # State is still 6-dim (no regime flag leaked)
     rs.reset()
     state = rs._build_state()
-    check("Regime NOT directly in state (dim=6)", state.shape == (6,))
+    check("Regime NOT directly in state (dim=5)", state.shape == (5,))
 
 except Exception as e:
     check("Regime switching", False, str(e))

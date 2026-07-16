@@ -26,7 +26,7 @@ Architecture rationale:
 
 Tensor shape conventions (documented at each step):
     B  = batch size
-    A  = number of actions  (5 in our problem)
+    A  = number of actions  (6 in our problem)
     N  = number of tau samples per forward pass
     d  = embedding dimension (hidden_dim)
 """
@@ -48,13 +48,13 @@ class NetworkConfig:
     IQN network hyperparameters.
 
     Defaults follow Dabney et al. (2018) adapted for our
-    small state space (dim=6) instead of Atari image inputs.
-    We use a smaller network since our state is 6-dim,
+    small state space (dim=5) instead of Atari image inputs.
+    We use a smaller network since our state is 5-dim,
     not 84×84 pixels — a large Atari-style network would
     massively overfit on tabular financial features.
     """
     state_dim        : int   = 5      # our MDP state dimension
-    n_actions        : int   = 5      # {0%, 25%, 50%, 75%, 100%}
+    n_actions        : int   = 6      # {0, 0.2, 0.4, 0.6, 0.8, 1.0} of inventory
     hidden_dim       : int   = 128    # embedding dimension d
     cos_embedding_dim: int   = 64     # n in cosine embedding (paper uses 64)
     n_hidden_layers  : int   = 2      # depth of state encoder + output MLP
@@ -124,7 +124,7 @@ class CosineQuantileEmbedding(nn.Module):
 
 class StateEncoder(nn.Module):
     """
-    Encodes state s ∈ R^6 into embedding space R^d.
+    Encodes state s ∈ R^5 into embedding space R^d.
 
     Simple MLP: input_dim → hidden_dim → hidden_dim
     Uses LayerNorm for training stability with financial data

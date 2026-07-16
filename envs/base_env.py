@@ -67,7 +67,7 @@ class EnvConfig:
 # ---------------------------------------------------------------------------
 
 # Global action set: fractions of remaining inventory to execute.
-# Index 0 = wait, Index 4 = liquidate everything now.
+# Index 0 = wait, Index 5 = liquidate everything now.
 # ACTION_FRACS = np.array([0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0], dtype=np.float32)
 ACTION_FRACS = np.array([0.0, 0.2, 0.4, 0.6, 0.8, 1.0], dtype=np.float32)
 
@@ -83,12 +83,14 @@ class BaseExecutionEnv(ABC):
     """
     Abstract execution environment.
 
-    State space  (dim = 6):
-        s_t = [t*, q_t*, Δp_t*, spread_t*, imb_t*, σ̂_t*]
+    State space  (dim = 5):
+        s_t = [t*, q_t*, Δp_t*, spread_t*, imb_t*]
+        (the realized-vol feature σ̂_t is currently disabled — see
+        _build_state; the state is 5-D, matching the paper's R^5 encoder.)
         All features normalized to a stable range for neural nets.
 
-    Action space (discrete, N_ACTIONS = 5):
-        a_t ∈ {0,1,2,3,4}  →  φ(a) ∈ {0, 0.25, 0.50, 0.75, 1.0}
+    Action space (discrete, N_ACTIONS = 6):
+        a_t ∈ {0,1,2,3,4,5}  →  φ(a) ∈ {0, 0.2, 0.4, 0.6, 0.8, 1.0}
         x_t = φ(a_t) * q_t  shares executed this period
 
     Reward:
@@ -253,8 +255,9 @@ class BaseExecutionEnv(ABC):
 
     def _build_state(self) -> np.ndarray:
         """
-        Construct the 6-dimensional normalized state vector:
-            s_t = [t*, q_t*, Δp_t*, spread_t*, imb_t*, σ̂_t*]
+        Construct the 5-dimensional normalized state vector:
+            s_t = [t*, q_t*, Δp_t*, spread_t*, imb_t*]
+        (σ̂_t realized-vol feature is currently disabled — see below.)
         """
         spread, imbalance = self._get_lob_features()
 

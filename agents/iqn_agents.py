@@ -51,8 +51,8 @@ Tensor shape guide (used consistently in comments below):
     B  = batch_size (e.g. 64)
     N  = n_tau_samples during training (e.g. 8)
     N' = n_tau_targets during training (e.g. 8, can differ)
-    A  = n_actions (5)
-    d  = hidden_dim (128)
+    A  = n_actions (6)
+    d  = hidden_dim (64)
 """
 
 from __future__ import annotations
@@ -142,10 +142,10 @@ class IQNAgent:
 
     Usage:
         # IQN-neutral
-        agent = IQNAgent(AgentConfig(cvar_alpha=1.0), state_dim=6, n_actions=5)
+        agent = IQNAgent(AgentConfig(cvar_alpha=1.0), state_dim=5, n_actions=6)
 
         # IQN-CVaR_0.95
-        agent = IQNAgent(AgentConfig(cvar_alpha=0.95), state_dim=6, n_actions=5)
+        agent = IQNAgent(AgentConfig(cvar_alpha=0.95), state_dim=5, n_actions=6)
 
         # Training loop
         state = env.reset()
@@ -234,7 +234,7 @@ class IQNAgent:
             eval_mode: if True, always greedy (no exploration)
 
         Returns:
-            action: int in {0, 1, 2, 3, 4}
+            action: int in {0, 1, 2, 3, 4, 5}
         """
         epsilon = self._get_epsilon() if not eval_mode else 0.0
 
