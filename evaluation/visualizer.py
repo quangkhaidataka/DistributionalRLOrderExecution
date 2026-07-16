@@ -306,7 +306,10 @@ class Visualizer:
             quantiles, _ = net(state_t, n_tau=n_tau,
                                tau_low=0.01, tau_high=0.99)
             # quantiles: (1, n_tau, A)
-            quantiles = quantiles.squeeze(0).cpu().numpy()  # (n_tau, A)
+            # NOTE: use .tolist() (not .numpy()) to avoid the torch<->numpy ABI
+            # break under torch 2.2.2 + numpy 2.x ("RuntimeError: Numpy is not
+            # available"). Root fix alternative: pip install "numpy<2".
+            quantiles = np.array(quantiles.squeeze(0).cpu().tolist())  # (n_tau, A)
 
         # Sort quantiles along τ dimension for each action
         # (IQN samples τ randomly, so output isn't ordered)
