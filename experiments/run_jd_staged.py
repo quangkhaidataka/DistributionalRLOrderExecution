@@ -54,11 +54,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))   # experiments/ siblin
 
 import numpy as np
 
-from envs import JumpDiffusionEnv, SimConfig
+from envs import JumpDiffusionEnv, AlmgrenChrissEnv, MeanRevertingEnv, SimConfig
 import run_simulation as RS
 from exp_utils import dump_config_json
 
 LEARNED_TRAINABLE = ('DQN', 'DDQN', 'QR-DQN', 'IQN-neutral')
+# Staged runner supports the sim envs used by Batch B1 (AC + JD). MeanReverting
+# is available for completeness. All share SimConfig / build_agents / run_phase.
+SIM_ENVS = {
+    'jump_diffusion': JumpDiffusionEnv,
+    'almgren_chriss': AlmgrenChrissEnv,
+    'mean_reverting': MeanRevertingEnv,
+}
 DEFAULT_OUT = 'results/_seeds/seed42/jump_diffusion'
 MANIFEST_NAME = 'staged_manifest.json'
 
@@ -81,6 +88,7 @@ def build_sim_config(args) -> SimConfig:
 
 def _manifest_payload(sim_config, args) -> dict:
     return {
+        'env': args.env,
         'sim_config': asdict(sim_config),
         'seed': args.seed,
         'episodes': args.episodes,
@@ -93,7 +101,7 @@ def _manifest_payload(sim_config, args) -> dict:
 
 # Keys that MUST match across all staged jobs sharing a dir (device included:
 # CPU vs MPS can differ in the last FP bits, which would break bit-equivalence).
-_MANIFEST_MATCH_KEYS = ('sim_config', 'seed', 'episodes', 'eval_freq',
+_MANIFEST_MATCH_KEYS = ('env', 'sim_config', 'seed', 'episodes', 'eval_freq',
                         'checkpoint_freq', 'eval_episodes', 'device')
 
 
@@ -139,9 +147,10 @@ def best_ep_from_log(log_path: Path, select_by: str = 'cvar'):
 # ---------------------------------------------------------------------------
 
 def build_all(sim_config, args):
-    """Build the full agent dict + a JD train/eval env pair (identical to run_phase)."""
-    train_env = JumpDiffusionEnv(sim_config)
-    eval_env = JumpDiffusionEnv(sim_config)
+    """Build the full agent dict + a train/eval env pair (identical to run_phase)."""
+    env_cls = SIM_ENVS[args.env]
+    train_env = env_cls(sim_config)
+    eval_env = env_cls(sim_config)
     sd, na = train_env.state_dim, train_env.n_actions
     agents = RS.build_agents(sim_config, sd, na, seed=args.seed, device_str=args.device)
     return agents, train_env, eval_env
@@ -182,8 +191,9 @@ def cmd_only_agent(args):
     if name not in learned_names(agents):
         raise SystemExit(f'--only-agent must be one of {learned_names(agents)}')
 
-    print(f'\n### STAGED TRAIN {name}  (JD λ={sim_config.jump_intensity} '
-          f'σ={sim_config.jump_std} μ={sim_config.jump_mean}) -> {out}')
+    jd = f' λ={sim_config.jump_intensity} σ={sim_config.jump_std} μ={sim_config.jump_mean}' \
+        if args.env == 'jump_diffusion' else ''
+    print(f'\n### STAGED TRAIN {name}  ({args.env}{jd}) -> {out}')
     print(f'    episodes={args.episodes} eval_freq={args.eval_freq} '
           f'ckpt_freq={args.checkpoint_freq} seed={args.seed} device={args.device}')
 
@@ -252,6 +262,7 @@ def cmd_assemble_eval(args):
             f'(CPU vs MPS differ in the last FP bits).')
 
     args.seed = seed          # construction seed from manifest (agents get loaded over)
+    args.env = manifest.get('env', 'jump_diffusion')   # eval on the trained env
     agents, _train_env, eval_env = build_all(sim_config, args)
     canon = canonical_order(agents)
 
@@ -331,6 +342,8 @@ def main():
     mode.add_argument('--assemble-eval', action='store_true',
                       help='Restore best checkpoints, share, evaluate, assemble the table')
 
+    ap.add_argument('--env', choices=list(SIM_ENVS), default='jump_diffusion',
+                    help='Simulation env to train/eval (default jump_diffusion)')
     ap.add_argument('--out-dir', default=DEFAULT_OUT,
                     help='Shared phase dir (contains checkpoints/ and logs/)')
     ap.add_argument('--eval-agents', nargs='+', default=None,
