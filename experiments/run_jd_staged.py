@@ -116,13 +116,21 @@ def write_or_check_manifest(log_dir: Path, payload: dict) -> dict:
     return existing
 
 
-def best_ep_from_log(log_path: Path):
-    """Best-by-validation-CVaR95 epoch (mirrors train_agent's restore)."""
+_SELECT_KEY = {'cvar': 'CVaR_0.95_bps', 'mean': 'mean_IS_bps'}
+
+
+def best_ep_from_log(log_path: Path, select_by: str = 'cvar'):
+    """Best-by-validation epoch: min CVaR_0.95_bps (cvar) or min mean_IS_bps (mean).
+
+    'cvar' mirrors train_agent's restore (the default everywhere). 'mean' is the
+    D1 diagnostic: pick the neutral checkpoint by lowest validation mean IS.
+    """
     log = json.loads(Path(log_path).read_text())
     hist = log.get('eval_history', [])
     if not hist:
         return None
-    best = min(hist, key=lambda x: x.get('CVaR_0.95_bps', float('inf')))
+    key = _SELECT_KEY[select_by]
+    best = min(hist, key=lambda x: x.get(key, float('inf')))
     return best['episode']
 
 
@@ -203,8 +211,8 @@ def cmd_only_agent(args):
 # Mode: assemble eval
 # ---------------------------------------------------------------------------
 
-def _partial_dir(log_dir: Path) -> Path:
-    d = log_dir / '_eval_partial'
+def _partial_dir(log_dir: Path, tag: str = '') -> Path:
+    d = log_dir / f'_eval_partial{tag}'
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -247,20 +255,24 @@ def cmd_assemble_eval(args):
     agents, _train_env, eval_env = build_all(sim_config, args)
     canon = canonical_order(agents)
 
-    # Restore best-by-val-CVaR95 checkpoints for the learned agents.
+    # Checkpoint selection. IQN-neutral honours --select-by (cvar|mean); DQN/DDQN
+    # always use best-by-val-CVaR95 (D1 changes ONLY the shared neutral weights).
+    select_by = args.select_by
+    tag = '' if select_by == 'cvar' else f'_{select_by}'
     for name in learned_names(agents):
+        sb = select_by if name == 'IQN-neutral' else 'cvar'
         lp = log_dir / f'{name}_training.json'
         if not lp.exists():
             raise SystemExit(f'Missing training log for {name}: {lp}. '
                              f'Train all learned agents before --assemble-eval.')
-        best_ep = best_ep_from_log(lp)
+        best_ep = best_ep_from_log(lp, select_by=sb)
         ckpt = ckpt_dir / f'{name}_ep{best_ep}.pt'
         if not ckpt.exists():
             raise SystemExit(
                 f'Best checkpoint for {name} not found: {ckpt} (best ep={best_ep}). '
                 f'Ensure --checkpoint-freq divides --episodes so it was saved.')
         agents[name].load(str(ckpt))
-        print(f'  restored {name}: best-by-val-CVaR95 ep={best_ep}')
+        print(f'  restored {name}: best-by-val-{sb} ep={best_ep}')
 
     # Share IQN-neutral (best) weights to the CVaR variants (D-key design).
     RS.share_iqn_weights(agents)
@@ -272,13 +284,13 @@ def cmd_assemble_eval(args):
         raise SystemExit(f'--eval-agents unknown: {bad}. Choose from {canon}')
     sub_agents = {n: agents[n] for n in canon if n in subset}   # canonical order
 
-    print(f'\n### ASSEMBLE-EVAL  evaluating {list(sub_agents)} '
+    print(f'\n### ASSEMBLE-EVAL (select-by={select_by}) evaluating {list(sub_agents)} '
           f'({eval_episodes} eps, seed={seed + 99_999})')
     all_results, trackers = RS.evaluate_all(
         sub_agents, eval_env, n_eval=eval_episodes, seed=seed + 99_999)
 
-    # Write per-agent partials.
-    pdir = _partial_dir(log_dir)
+    # Write per-agent partials (tagged so cvar/mean selections don't collide).
+    pdir = _partial_dir(log_dir, tag)
     for r in all_results:
         name = r['agent_name']
         is_bps = (np.array(trackers[name].is_values) * 1e4).tolist()
@@ -292,7 +304,8 @@ def cmd_assemble_eval(args):
     if missing:
         print(f'\nPARTIAL: {len(have)}/{len(canon)} agents evaluated. '
               f'Still missing: {missing}\n'
-              f'  Run --assemble-eval --eval-agents {" ".join(missing)} to finish.')
+              f'  Run --assemble-eval --select-by {select_by} '
+              f'--eval-agents {" ".join(missing)} to finish.')
         return
 
     all_results_full, is_dict = [], {}
@@ -300,9 +313,10 @@ def cmd_assemble_eval(args):
         payload = json.loads((pdir / f'{name}.json').read_text())
         all_results_full.append(payload['result'])
         is_dict[name] = np.array(payload['is_bps'])
-    table = RS.save_eval_outputs(all_results_full, is_dict, log_dir)
+    table = RS.save_eval_outputs(all_results_full, is_dict, log_dir, suffix=tag)
     print('\n' + table)
-    print(f'\nAssembled -> {log_dir}/comparison_table.txt (+ all_results.json, is_arrays.pkl)')
+    print(f'\nAssembled -> {log_dir}/comparison_table{tag}.txt '
+          f'(+ all_results{tag}.json, is_arrays{tag}.pkl)')
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +335,11 @@ def main():
                     help='Shared phase dir (contains checkpoints/ and logs/)')
     ap.add_argument('--eval-agents', nargs='+', default=None,
                     help='(assemble-eval) evaluate only this subset this job')
+    ap.add_argument('--select-by', choices=['cvar', 'mean'], default='cvar',
+                    help='(assemble-eval) IQN-neutral checkpoint selection: '
+                         'cvar=min val CVaR95 (default, = train_agent restore), '
+                         'mean=min val mean IS (D1). DQN/DDQN always cvar. '
+                         'mean writes *_mean.* outputs so cvar results are kept.')
     ap.add_argument('--episodes', type=int, default=RS.DEFAULT_TRAIN['n_episodes'])
     ap.add_argument('--eval-episodes', type=int, default=RS.DEFAULT_TRAIN['n_eval_episodes'])
     ap.add_argument('--eval-freq', type=int, default=RS.DEFAULT_TRAIN['eval_freq'])

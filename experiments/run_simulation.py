@@ -487,18 +487,19 @@ def save_training_log(log: Dict, path: Path) -> None:
 
 
 def save_eval_outputs(all_results: List[Dict], is_dict: Dict[str, np.ndarray],
-                      log_dir: Path) -> str:
-    """Write is_arrays.pkl + comparison_table.txt + all_results.json.
+                      log_dir: Path, suffix: str = '') -> str:
+    """Write is_arrays{suffix}.pkl + comparison_table{suffix}.txt + all_results{suffix}.json.
 
     `all_results` must already be in the canonical (build_agents) agent order;
-    `is_dict` maps agent_name → IS array in bps. Returns the table string.
+    `is_dict` maps agent_name → IS array in bps. `suffix` (e.g. '_mean') keeps
+    alternative selections side-by-side without overwriting. Returns the table.
     """
     import pickle
-    with open(log_dir / 'is_arrays.pkl', 'wb') as f:
+    with open(log_dir / f'is_arrays{suffix}.pkl', 'wb') as f:
         pickle.dump(is_dict, f)
 
     table = format_comparison_table(all_results, bps=True)
-    with open(log_dir / 'comparison_table.txt', 'w') as f:
+    with open(log_dir / f'comparison_table{suffix}.txt', 'w') as f:
         f.write(table)
 
     results_json = []
@@ -512,7 +513,7 @@ def save_eval_outputs(all_results: List[Dict], is_dict: Dict[str, np.ndarray],
             else:
                 serialisable[k] = v
         results_json.append(serialisable)
-    with open(log_dir / 'all_results.json', 'w') as f:
+    with open(log_dir / f'all_results{suffix}.json', 'w') as f:
         json.dump(results_json, f, indent=2)
     return table
 
