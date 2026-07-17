@@ -18,8 +18,7 @@ Locked **(λ_J=0.05, σ_J=0.16)** and ran the 30k-ep JD retrain **staged** (one 
 - ❌ **No differentiation at headline α** — IQN-CVaR₀.₉₅ CVaR₉₅ (3.483) not < IQN-neutral (3.461); sign flips across eval seeds (within noise). α-sweep shows a reduction only at aggressive α=0.5 (3.35 vs neutral 3.54).
 
 ### ▶ Immediate next step (user decision)
-1. **Per the FALLBACK RULE: recommend one rerun at the pre-declared fallback (0.05, 0.12); NOT launched.** Rerun via `run_jd_staged.py --only-agent … --jump-std 0.12 --device cpu` into a fresh archived dir. (My read: the fallback may fix DDQN's luck-of-the-draw collapse but likely NOT the weak headline differentiation, which stems from best-by-val-CVaR selecting an already-tail-aggressive IQN-neutral — see DECISION.md caveat.)
-2. Do NOT proceed to Batch B until the JD table passes non-degeneracy AND shows differentiation.
+Two diagnostics ran (D1 selection-rule test on σ=0.16; D2 fallback retrain at σ=0.12, both `--select-by {cvar,mean}`). **2×2 matrix at `results/_jd_diagnostics/decision_matrix.md`.** Headline: **all four cells FAIL** — DDQN collapses to dump-at-t0 in every cell (σ- and selection-independent → DDQN instability, triggers the fallback rule), and headline-α differentiation is not robust anywhere (controlled Δ positive only for σ=0.16-mean, and its sweep flips sign → noise; that cell's neutral CVaR95 14.1 > TWAP 12.6 anyway). IQN-neutral never dumps in any cell. **Recommended cell (flagged, no change): σ=0.16-cvar** (current default — best absolute IQN tail −73% vs TWAP, sweep in correct direction, but no headline differentiation). **Awaiting user decision.** Do NOT proceed to Batch B.
 
 ---
 
