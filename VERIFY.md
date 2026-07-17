@@ -25,6 +25,11 @@ Legend for expected output: ✅ = must see this.
 | **P2-T4** | R4 impact misspecification (eval-only) | `experiments/run_impact_misspec.py` | A10, B (run) |
 | **P2-T5** | R5 width ablation (optional) | `experiments/run_width_ablation.py` | A10, B (run) |
 | **P2-T6** | `--smoke` flags + shared config dump | `experiments/run_simulation.py`, `run_tag.py` (+ `exp_utils.py`) | A11, B1–B3 |
+| **T1** | JD recalibration → symmetric (μ_J=0), provisional λ=0.05/σ=0.12 | `envs/simulated_env.py`, `experiments/run_simulation.py` | A12 |
+| **T2** | Jump-calibration scan + pre-registered criteria | `experiments/scan_jump_calibration.py` | A13 |
+| **T3** | Jump-rate test: computed P-band + symmetric assertion | `tests/run_tests.py` | A14 (in A3/A5) |
+| **T4** | Sweep selects best-by-val-CVaR checkpoint | `experiments/sweep_cvar_alpha.py`, `RUNBOOK.md` | A15 |
+| **T5** | RUNBOOK JD-recalibration section + run_seeds jump overrides | `RUNBOOK.md`, `experiments/run_seeds.py` | inspection + `run_seeds --help` (jump flags) |
 
 ---
 
@@ -103,7 +108,7 @@ python3 experiments/run_tag.py        --help 2>/dev/null | grep -q -- "--smoke" 
 - `A0 OK: all compile`
 - `A1 OK`
 - `A2 OK: DQN=5190 IQN=11462 (drift@128=18566)`
-- A3/A5 → `Results: 31 passed, 0 failed out of 31 tests` (includes Section 7 jump rate: `E[jumps/episode] ≈ λ_J·N`, `P(≥1 jump/episode) ∈ [0.10, 0.20]`, and Section 1 `state shape is (5,)`, `n_actions == 6`)
+- A3/A5 → `Results: 32 passed, 0 failed out of 32 tests` (includes Section 7 jump rate: `E[jumps/episode] ≈ λ_J·N`, computed-band `P(≥1 jump/episode) ≈ 1-exp(-λ_J·N) (±0.03)`, `Jumps are symmetric (jump_mean == 0.0)`, and Section 1 `state shape is (5,)`, `n_actions == 6`)
 - `A4 OK: ...`
 - `A6 OK: no 128 branch`
 - `A7 OK: --device in both`
@@ -111,6 +116,59 @@ python3 experiments/run_tag.py        --help 2>/dev/null | grep -q -- "--smoke" 
 - A9 → `8/8 checks passed`
 - A10 → five `A10 OK: <script> imports`
 - `A11 OK: --smoke in both`
+
+---
+
+## JD-recalibration fast checks (T1–T4) — < 30 s total, no training
+
+```bash
+# --- A12 (T1): jump defaults symmetric provisional (both places) ---
+python3 -c "
+import sys; sys.path.insert(0,'experiments')
+from envs import SimConfig
+import run_simulation as RS
+c, d = SimConfig(), RS.DEFAULT_SIM_CONFIG
+assert (c.jump_intensity, c.jump_mean, c.jump_std) == (0.05, 0.0, 0.12)
+assert (d['jump_intensity'], d['jump_mean'], d['jump_std']) == (0.05, 0.0, 0.12)
+print('A12 OK (T1): jump defaults symmetric 0.05/0.0/0.12 in SimConfig + DEFAULT_SIM_CONFIG')" 2>/dev/null
+
+# --- A13 (T2): scan criteria logic + dump-action index ---
+python3 -c "
+import sys; sys.path.insert(0,'experiments')
+import scan_jump_calibration as S
+assert S.DUMP_ACTION == 5
+def cell(tw, std, dump, nn, cv):
+    return {'TWAP':{'CVaR_0.95_bps':tw},
+            'DQN':{'std_IS_bps':0.5,'dump_fraction':0.2,'CVaR_0.95_bps':9},
+            'IQN-neutral':{'std_IS_bps':std,'dump_fraction':dump,'CVaR_0.95_bps':nn},
+            'IQN-CVaR_0.95':{'std_IS_bps':std,'dump_fraction':dump,'CVaR_0.95_bps':cv}}
+assert S.score_criteria(cell(2,0,1,2.08,2.08))['hard_pass'] is False   # degenerate
+assert S.score_criteria(cell(8,0.9,0.2,6.5,5.9))['hard_pass'] is True  # healthy
+print('A13 OK (T2): DUMP_ACTION=5; degenerate cell FAILs, healthy cell PASSes')" 2>/dev/null
+
+# --- A14 (T3): Section 7 computed P-band + symmetric assertion ---
+python3 tests/run_tests.py 2>/dev/null | grep -E "1-exp|symmetric"
+
+# --- A15 (T4): sweep picks best-by-val-CVaR ckpt, not newest ---
+python3 -c "
+import sys, os, tempfile, json; sys.path.insert(0,'experiments')
+import sweep_cvar_alpha as S
+d = tempfile.mkdtemp(); ck = os.path.join(d,'checkpoints'); lg = os.path.join(d,'logs')
+os.makedirs(ck); os.makedirs(lg)
+json.dump({'eval_history':[{'episode':1000,'CVaR_0.95_bps':9.0},
+                           {'episode':2000,'CVaR_0.95_bps':3.0},
+                           {'episode':3000,'CVaR_0.95_bps':7.0}]},
+          open(os.path.join(lg,'IQN-neutral_training.json'),'w'))
+for ep in (1000,2000,3000): open(os.path.join(ck,f'IQN-neutral_ep{ep}.pt'),'w').close()
+assert S.find_best_checkpoint(ck).name == 'IQN-neutral_ep2000.pt'   # min val CVaR, not newest
+print('A15 OK (T4): sweep selects best-by-val-CVaR ep2000, not newest ep3000')" 2>/dev/null
+```
+
+**Expected (✅):**
+- `A12 OK (T1): ...`
+- `A13 OK (T2): ...`
+- A14 → two ✓ lines: `P(≥1 jump/episode) ≈ 1-exp(-λ_J·N) (±0.03)` and `Jumps are symmetric (jump_mean == 0.0)`
+- `A15 OK (T4): ...`
 
 ---
 
