@@ -6,6 +6,20 @@
 
 ---
 
+## ★ FINAL JD configuration + fallback-rule amendment (2026-07-17)
+
+- **LOCKED — final JD configuration: λ_J = 0.05, σ_J = 0.16, μ_J = 0, with cvar checkpoint-selection.** No further calibration search. This is the default in `SimConfig` + `DEFAULT_SIM_CONFIG`; seed-42 JD = `results/_seeds/seed42/jump_diffusion` (σ=0.16 staged run).
+- **Rejected cells** (from the 2×2 selection×σ diagnostic, `results/_jd_diagnostics/decision_matrix.md`):
+  - **σ=0.16, mean-select** — restores differentiation in the *controlled* comparison (Δ +0.49), but the slow neutral policy has CVaR₉₅ **14.1 > TWAP 12.6** (worse than the benchmark), and the sign flips in the separate-seed sweep → not robust.
+  - **σ=0.12, cvar-select** — neutral CVaR₉₅ 5.43 (beats TWAP 9.84) but **no headline differentiation** (IQN-CVaR₀.₉₅ 5.73 > neutral 5.43); milder tail than σ=0.16.
+  - **σ=0.12, mean-select** — similar moderate-pace policy; **no differentiation** (6.40 vs 6.38).
+  - → **σ=0.16-cvar chosen:** strongest *absolute* IQN tail (CVaR₉₅ 3.46 = **−73% vs TWAP**), non-degenerate IQN (Std 0.79, dump 0.000), and the only cell whose α-sweep runs in the theoretically-correct direction. Headline-α differentiation is not robust in *any* cell (a reported finding, not a blocker).
+- **AMENDMENT to the pre-registered fallback rule.** The original rule (dump>50% **OR any learned agent Std IS<0.05** OR IQN-neutral CVaR₉₅≥TWAP CVaR₉₅ → recommend fallback) was intended to detect **environment degeneracy**, but it **conflated environment health with baseline (DDQN) behaviour.** The diagnostics showed **DDQN's dump-at-t0 collapse is σ- and selection-independent** (Std≈0 at both σ, both selections; dump≈1.0) — so it is *not* evidence of a degenerate environment. **Reclassification:** DDQN's collapse is now a **reportable FINDING** — *the scalar value-based method (DDQN) under tail-based (CVaR₉₅) checkpoint selection collapses to the corner solution (dump-at-t0); the distributional agent (IQN) does not.*
+- **New environment-health criteria** (replace the DDQN-triggering condition; judged on the **distributional agent + benchmark**, not scalar baselines): the JD env is healthy iff **IQN-neutral Std IS > 0.05 bps AND IQN-neutral dump fraction < 50% AND TWAP CVaR₉₅ ∈ [4,15] bps.** The locked σ=0.16-cvar cell passes all three (IQN-neutral Std **0.79**, dump **0.000**, TWAP CVaR₉₅ **12.63**).
+- **This amendment was made AFTER observing that no 2×2 cell could satisfy the original rule** (all four failed on the DDQN Std<0.05 condition). The rule was mis-targeted (too strict on a scalar baseline), not the environment. Recorded for transparency — it is a **rule correction**, not post-hoc metric-shopping: the new criteria are *stricter on the agent that matters* (IQN) and drop a condition that only ever fired on DDQN's inherent instability. Original rule retained in git history + RUNBOOK for provenance.
+
+---
+
 ## Architecture & fair comparison
 
 - **D1 — Unified architecture for all experiments.** IQN: hidden=64, cos_embedding=32, 2-layer LayerNorm+ReLU → **11,462 trainable params**. DQN/DDQN: hidden=64, same backbone → **5,190 params**. Only code change: `DeepRLConfig.hidden_dim 128→64`. A build-time **param-count guard** (`agents/param_utils.py`) asserts these so config drift self-detects. *Why:* Batch-A-era runs had drifted (JD IQN was 128/64, AC/TAQ 64/32); one honest architecture makes the comparison defensible.

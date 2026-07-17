@@ -8,7 +8,13 @@
 
 ---
 
-## Current status: staged full-scale JD retrain DONE → R.4 gate FAILED → fallback (0.05, 0.12) recommended, NOT launched
+## Current status: JD config LOCKED (σ=0.16-cvar); fallback rule amended → executing Batch B1 (sim multi-seed) + Batch C
+
+**Locked final JD configuration: λ_J=0.05, σ_J=0.16, μ_J=0, cvar-selection** (user-confirmed 2026-07-17; no further calibration search). The 2×2 selection×σ diagnostic rejected the other three cells (see DECISION.md ★ section). **Fallback rule AMENDED:** DDQN's dump-collapse is σ/selection-independent → reclassified as a reported FINDING, not an env-degeneracy trigger; new env-health criteria are IQN-neutral-only (Std>0.05 AND dump<50% AND TWAP CVaR₉₅∈[4,15]) — the locked run passes all three. Now running **Batch B1** (AC+JD × seeds {123,7,2024,31}, staged CPU) + aggregation, then **Batch C** (jump sensitivity + impact misspec). Batch A done; TAQ single-seed by design.
+
+<details><summary>superseded status: staged JD retrain + R.4 gate FAIL (kept for history)</summary>
+
+### staged full-scale JD retrain DONE → R.4 (original rule) FAILED → resolved by the 2×2 diagnostic + rule amendment
 
 Locked **(λ_J=0.05, σ_J=0.16)** and ran the 30k-ep JD retrain **staged** (one agent per job) via `experiments/run_jd_staged.py` — validated byte-identical to the monolithic path (equivalence smoke) and to split `--eval-agents`. **Ran on CPU, not MPS:** the MPS DQN job was reaped at ep16000/30000; CPU is ~6× faster here (DQN 164s, DDQN 183s, IQN-neutral 484s — all ≪ 34 min). Order-independent per-agent RNG reseed added to `train_agent`+`evaluate_all` makes staged ≡ monolithic and CPU deterministic.
 
@@ -17,8 +23,9 @@ Locked **(λ_J=0.05, σ_J=0.16)** and ran the 30k-ep JD retrain **staged** (one 
 - ❌ **DDQN degenerate** — dump-at-t0 fraction 0.999 → Std IS 0.0092 < 0.05 (**triggers the FALLBACK RULE**: any learned agent Std < 0.05).
 - ❌ **No differentiation at headline α** — IQN-CVaR₀.₉₅ CVaR₉₅ (3.483) not < IQN-neutral (3.461); sign flips across eval seeds (within noise). α-sweep shows a reduction only at aggressive α=0.5 (3.35 vs neutral 3.54).
 
-### ▶ Immediate next step (user decision)
-Two diagnostics ran (D1 selection-rule test on σ=0.16; D2 fallback retrain at σ=0.12, both `--select-by {cvar,mean}`). **2×2 matrix at `results/_jd_diagnostics/decision_matrix.md`.** Headline: **all four cells FAIL** — DDQN collapses to dump-at-t0 in every cell (σ- and selection-independent → DDQN instability, triggers the fallback rule), and headline-α differentiation is not robust anywhere (controlled Δ positive only for σ=0.16-mean, and its sweep flips sign → noise; that cell's neutral CVaR95 14.1 > TWAP 12.6 anyway). IQN-neutral never dumps in any cell. **Recommended cell (flagged, no change): σ=0.16-cvar** (current default — best absolute IQN tail −73% vs TWAP, sweep in correct direction, but no headline differentiation). **Awaiting user decision.** Do NOT proceed to Batch B.
+**Resolution (2026-07-17):** the 2×2 diagnostic (D1 σ=0.16 selection test; D2 σ=0.12 fallback retrain; `results/_jd_diagnostics/decision_matrix.md`) showed all four cells fail the *original* rule, driven by DDQN's σ/selection-independent collapse. User locked **σ=0.16-cvar** and **amended the rule** (DDQN collapse → reported finding; IQN-only env-health criteria). See the ★ section in DECISION.md.
+
+</details>
 
 ---
 
