@@ -59,12 +59,15 @@ class SimConfig(EnvConfig):
     ou_mu       : float = 100.0   # long-term mean price (= p0)
 
     # --- Jump-diffusion parameters (Merton compound-Poisson STRESS scenario) ---
-    # P1-T3/D3: intensity is PER PERIOD (used directly as the Poisson rate, no ·dt).
-    # Rare-but-large adverse jumps: E[jumps/episode] = λ_J·N = 0.15,
-    # P(≥1 jump/episode) ≈ 14%; each jump ≈ -30 bps on p0=100.
-    jump_intensity : float = 0.03   # λ_J: expected jumps per period (Poisson rate)
-    jump_mean      : float = -0.30  # μ_J: mean jump size in $ (-30 bps on p0=100)
-    jump_std       : float = 0.40   # σ_J: jump size volatility in $
+    # Intensity is PER PERIOD (used directly as the Poisson rate, no ·dt).
+    # SYMMETRIC zero-mean jumps (μ_J = 0): jumps carry no expected drift, so the
+    # only incentive to trade faster is tail risk (not directional loss).
+    # Provisional values — the final (λ_J, σ_J) is chosen by
+    # experiments/scan_jump_calibration.py against pre-registered criteria.
+    #   E[jumps/episode] = λ_J·N = 0.25,  P(≥1 jump/episode) = 1-exp(-λ_J·N) ≈ 22%.
+    jump_intensity : float = 0.05   # λ_J: expected jumps per period (Poisson rate)
+    jump_mean      : float = 0.0    # μ_J: mean jump size in $ (0 = symmetric, no drift)
+    jump_std       : float = 0.12   # σ_J: jump size volatility in $ (~12 bps on p0=100)
 
 
 # ---------------------------------------------------------------------------
@@ -175,28 +178,39 @@ class MeanRevertingEnv(AlmgrenChrissEnv):
 class JumpDiffusionEnv(AlmgrenChrissEnv):
     """
     Execution environment with Merton jump-diffusion price dynamics —
-    a STRESS-TEST scenario with rare, large, adverse price dislocations.
+    a STRESS-TEST scenario with rare, SYMMETRIC price dislocations.
 
     Price dynamics:
         p_{t+1} = p_t - γ·x_t + σ·√dt·ξ_t + Σ_{k=1}^{N_t} J_k
 
     where:
         N_t ~ Poisson(λ_J)        number of jumps in period t (PER-PERIOD rate)
-        J_k ~ N(μ_J, σ_J²)        jump sizes in $ (μ_J < 0 = adverse)
+        J_k ~ N(μ_J, σ_J²)        jump sizes in $  (μ_J = 0 → symmetric)
 
-    Calibration (P1-T3/D3) — a rare-but-large stress regime:
-        λ_J = 0.03 per period  →  E[jumps/episode] = λ_J·N = 0.15,
-                                  P(≥1 jump/episode) ≈ 14%.
-        μ_J = -0.30 $, σ_J = 0.40 $  →  each jump ≈ -30 bps on p0 = 100.
-        The Poisson rate is used PER PERIOD (no ·dt scaling): the previous
-        `Poisson(λ·dt)` with dt=12 inflated it ~12× (≈18 jumps/episode),
-        turning rare jumps into a near-constant adverse drift.
+    Calibration — a rare, zero-mean, fat-tailed regime:
+        μ_J = 0 (SYMMETRIC): jumps carry NO expected drift, so holding
+            inventory is not directionally penalised — the only reason to
+            trade faster is tail risk. This is deliberate. The previous
+            adverse calibration (μ_J = -0.30) added a strong negative drift
+            (N·λ·μ_J ≈ -4.5 bps) on top of the tail, so immediate full
+            liquidation (a certain ~2.08 bps) dominated and every agent
+            collapsed to dump-at-t0 (IQN Std IS = 0.000) — degenerate.
+        λ_J, σ_J: provisional 0.05 / 0.12 $; the final pair is chosen by
+            experiments/scan_jump_calibration.py over the grid
+            λ ∈ {0.05, 0.10} × σ_J ∈ {0.08, 0.12, 0.16} $.
+        The Poisson rate is PER PERIOD (no ·dt scaling).
 
-    This yields a fat-tailed IS distribution: most episodes are Gaussian
-    (no jumps), a minority carry a large tail loss — precisely where
-    IQN-CVaR should outperform, by learning the bimodal return
-    distribution and avoiding jump-exposed actions. TWAP/AC follow a
-    fixed schedule and cannot adapt.
+    Pre-registered acceptance criteria for the chosen (λ_J, σ_J):
+        (a) Non-degeneracy : Std IS > 0.05 bps for every learned agent.
+        (b) Dump fraction  : < 50% of IQN-neutral eval episodes liquidate
+                             fully on the FIRST action (ACTION_FRACS index 5).
+        (c) Meaningful tail: TWAP CVaR_0.95 ∈ [4, 15] bps.
+        (d) Differentiation (soft): IQN-CVaR_0.95 CVaR_0.95 ≤ IQN-neutral's.
+
+    Most episodes are Gaussian (no jumps); a minority carry a symmetric
+    tail shock — precisely where IQN-CVaR should manage tail risk better
+    than the risk-neutral policy. TWAP/AC follow a fixed schedule and
+    cannot adapt.
 
     References:
         Merton (1976), "Option pricing when underlying stock returns
