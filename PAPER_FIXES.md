@@ -86,6 +86,8 @@ Every cell MATCHES the log (IQN-CVaR₀.₉₅ CVaR₉₅ "6.13" = logged 6.1300
 | `tab:taq_comparison` row 3 (IQN-neutral / IQN-CVaR) | MATCH — both kept |
 | `tab:taq_comparison` rows 1–2 (DQN, DDQN / IQN-CVaR) | **WILL-CHANGE** — numerator retrained |
 
+> **Single-seed by design (scope decision 2026-07-17):** the entire TAQ study is reported for **seed 42 only** — DQN/DDQN from the Batch-A retrain, IQN kept. There is **no TAQ mean±std / multi-seed table** and none is promised anywhere in this file; seed robustness is characterized in the **simulation** study (AC + JD multi-seed). Add the explicit limitation sentence — see §4.1 item 7. (See PLAN.md Decision log / Risk R-4.)
+
 ---
 
 ## §3 — Abstract / prose percentage claims (arithmetic re-derived)
@@ -116,6 +118,7 @@ Every cell MATCHES the log (IQN-CVaR₀.₉₅ CVaR₉₅ "6.13" = logged 6.1300
 4. **"Fair comparison" paragraph, L577–584:** rewrite to state explicit trainable-parameter counts — **IQN = 11,462, DQN/DDQN = 5,190** (identical 2-layer LayerNorm+ReLU backbone; IQN's only addition is the cosine quantile embedding, the minimal machinery of the method, cite **Dabney et al. 2018**). NB: this claim only becomes *true* after the Phase-3 unified retrain — do not paste the counts until DQN/DDQN (and JD IQN) are re-run at width 64.
 5. **Jump-diffusion framing, L506–522 & L183-198-analog:** reframe as an explicit **stress-test scenario** with rare, economically-meaningful jumps (P(≥1 jump/episode) ≈ 10–20%); cite **Moazeni, Coleman & Li (2013)** alongside Merton (1976).
 6. **Notation collisions (§5.3).**
+7. **Empirical-study limitation sentence (single-seed case study).** Near the start of the AAPL empirical study (around `tab:taq_results` / `tab:taq_comparison`, **L798–840** — e.g. in the study's setup paragraph or the table notes), insert a sentence such as: *"All empirical results are reported for a single training seed (seed 42); seed-level robustness of the learned policies is characterized in the simulation study (Table~\ref{tab:jd_results} and the multi-seed AC/JD tables). The evaluation window (Oct–Dec 2014) is fixed market data and does not vary with the training seed."* Makes the single-seed scope explicit (scope decision 2026-07-17; PLAN.md Decision log / Risk R-4). **Results-independent — safe to add now.**
 
 ### 4.2 WILL-CHANGE-AFTER-RETRAIN (insert a placeholder note, NOT a number, until Phase 3 completes)
 - **`tab:jd_results` (L646–663):** every row — JD env recalibration + arch unification.

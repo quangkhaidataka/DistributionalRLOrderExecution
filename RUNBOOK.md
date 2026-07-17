@@ -99,7 +99,9 @@ Fallback rerun (only if R.4 fails): add `--jump-std 0.12` to each `run_jd_staged
 
 ---
 
-## Batch B — SHOULD (robustness, remaining seeds) · split across two nights
+## Batch B — SHOULD (robustness, remaining seeds) · sim only · one night
+
+R1 seed robustness is **simulation-only (AC + JD)**. The TAQ study stays single-seed by design (Decision log 2026-07-17) — there is **no TAQ multi-seed batch**.
 
 ### B1 — sim multi-seed · ~11 h
 ```bash
@@ -108,13 +110,7 @@ python3 experiments/aggregate_seeds.py --env ac      # -> results/_aggregate/ac_
 python3 experiments/aggregate_seeds.py --env jump    # -> results/_aggregate/jump_seed_summary.{txt,tex}
 ```
 
-### B2 — TAQ multi-seed (DQN/DDQN only) · ~4 h
-```bash
-python3 experiments/run_seeds.py --taq --seeds 123 7 2024 31 --device mps
-python3 experiments/aggregate_seeds.py --env taq     # -> results/_aggregate/taq_seed_summary.{txt,tex}
-```
-
-> `aggregate_seeds --env {ac,jump,taq}` globs seeds `{42,123,7,2024,31}` (Batch A wrote seed 42, Batch B the rest) and emits mean ± std booktabs tables. **Asymmetry note (R-4):** TAQ IQN is single-seed (kept), so its ± std is 0 — footnote this in the paper, or run Batch D to symmetrize.
+> `aggregate_seeds --env {ac,jump}` globs seeds `{42,123,7,2024,31}` (Batch A wrote seed 42, Batch B the rest) and emits mean ± std booktabs tables. **TAQ is intentionally single-seed** — do **not** run `aggregate_seeds --env taq`; report the seed-42 TAQ table as a case study with a limitation statement (PAPER_FIXES §4.1).
 
 ---
 
@@ -135,20 +131,14 @@ python3 experiments/run_impact_misspec.py --env ac \
 
 ---
 
-## Batch D — OPTIONAL (appendix / symmetry) · ~6–8 h
+## Batch D — OPTIONAL (appendix) · ~2–3 h
 
 ```bash
 # D.1 — R5 DQN/DDQN width ablation (64 vs 128) on AC + JD
 python3 experiments/run_width_ablation.py --device mps
 #        -> results/width_ablation/summary.{txt,csv}
-
-# D.2 — TAQ IQN 5-seed (removes the R-4 single-seed asymmetry). This retrains IQN too,
-#        so write to a SEPARATE dir and do NOT overwrite results/taq/AAPL:
-for s in 42 123 7 2024 31; do
-  python3 experiments/run_tag.py --episodes 50000 --device mps   # writes results/taq/AAPL (see note)
-done
 ```
-> D.2 caveat: `run_tag.py` writes to `results/taq/AAPL` — to keep the kept D2 checkpoints, first move them aside or run each seed with a distinct `STOCK`/`OUT_ROOT`. Simplest: skip D.2 unless the committee demands IQN multi-seed on TAQ, and instead footnote the single-seed IQN.
+> The old **D.2 (TAQ IQN 5-seed)** is **removed**: the entire TAQ study is single-seed by design (Decision log 2026-07-17), so there is no asymmetry to symmetrize. Report the seed-42 TAQ table as a case study with a limitation statement (PAPER_FIXES §4.1).
 
 ---
 
@@ -157,8 +147,8 @@ done
 | Run | Output |
 |-----|--------|
 | Batch A/B sim | `results/_seeds/seed<seed>/<env_name>/` (checkpoints, logs/all_results.json, comparison_table.txt, figures) |
-| Batch A/B TAQ | `results/taq/AAPL_seed<seed>/` (logs/all_results.json, fold1/checkpoints, run_config.json) |
-| Aggregation | `results/_aggregate/<env>_seed_summary.{txt,tex}` |
+| Batch A TAQ (seed 42 only) | `results/taq/AAPL_seed42/` (logs/all_results.json, fold1/checkpoints, run_config.json) — single-seed by design |
+| Aggregation | `results/_aggregate/<env∈{ac,jump}>_seed_summary.{txt,tex}` (sim only) |
 | CVaR sweep | `results/_cvar_sweep/<tag>/` (frontier.png/pdf, sweep.csv, config.json) |
 | Jump sensitivity | `results/jump_sensitivity_<level>/` + `results/jump_sensitivity_summary.{txt,csv}` |
 | Impact misspec | `results/impact_misspec_<env>/` (matrix.txt/csv, per-cell dirs) |

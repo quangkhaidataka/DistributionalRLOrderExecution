@@ -17,6 +17,12 @@
 
 ---
 
+## Decision log
+
+- **2026-07-17 — No multi-seed robustness on TAQ; the TAQ study is single-seed by design.** Seed robustness (R1) applies to the **simulation** environments only (**AC + JD**). The TAQ empirical study stays single-seed: the **seed-42 DQN/DDQN retrain from Batch A** (already done) plus the **kept IQN checkpoints** are the final TAQ numbers. *Rationale:* seed sensitivity is characterized in the controlled simulation study; the empirical study is presented as a **single-seed case study** on fixed Oct–Dec 2014 market data (which does not vary with the seed), with an explicit limitation statement in the paper. *Consequences:* Batch B is **sim-only** (the old B2 TAQ multi-seed is deleted); Batch D drops the **TAQ-IQN multi-seed** item; **Risk R-4** re-scoped from "single-seed asymmetry" to "limitation statement + viva answer"; `run_seeds.py --taq` remains in code but is **intentionally unused**; **PAPER_FIXES §4.1** gains a limitation-sentence item.
+
+---
+
 ## Phase 0 — Repo verification & smoke tests
 
 ### 0.1 Findings verified against code
@@ -97,7 +103,7 @@ python3 experiments/run_tag.py --smoke            # add a --smoke flag: 100 epis
 All scripts **dump full config as JSON** beside their outputs and write to **new** seed/param-suffixed dirs (never touching existing `results/*`).
 
 ### P2-T1 — R1 multi-seed orchestration + aggregation
-- **New file `experiments/run_seeds.py`:** loops `{ac, jump} × seeds {42,123,7,2024,31}` calling the existing `run_phase`, writing to `results/<env>_seed<seed>/`. Separately loops TAQ DQN/DDQN × the same seeds into `results/taq/AAPL_seed<seed>/` (IQN reused from the kept `results/taq/AAPL`, see D2).
+- **New file `experiments/run_seeds.py`:** loops `{ac, jump} × seeds {42,123,7,2024,31}` calling the existing `run_phase`, writing to `results/<env>_seed<seed>/`. **R1 (seed robustness) is simulation-only (AC + JD).** `run_seeds.py` retains a `--taq` multi-seed path in code, but it is **intentionally unused** (scope decision 2026-07-17): the TAQ empirical study stays single-seed (seed 42) — see the Decision log and Risk R-4.
 - **New file `experiments/aggregate_seeds.py`:** reads the per-seed `all_results.json`, emits **mean ± std (bps)** per agent×metric as (a) plain text and (b) LaTeX `booktabs` (`\toprule/\midrule/\bottomrule`) ready to paste. Writes `results/_aggregate/<env>_seed_summary.{txt,tex}`.
 - **Unit test (cheap):** feed `aggregate_seeds` two synthetic per-seed dicts, assert mean/std arithmetic and LaTeX row count.
 - **Acceptance:** dry-run on 2 fake seeds produces a valid booktabs table; each per-seed dir contains a `config.json`.
@@ -139,26 +145,26 @@ P1 fixes + smoke pass ─┬─► [Batch A: MUST] seed-42 headline re-runs
                        │        ├─ JD(42, fixed+unified)    ─┤─► R2 CVaR sweep (eval-only) ─► frontier fig
                        │        └─ TAQ DQN/DDQN(42, unified)─┘   (IQN-neutral from kept ckpts)
                        │
-                       ├─► [Batch B: SHOULD] R1 multi-seed {AC,JD}×{123,7,2024,31} + TAQ DQN/DDQN×4 seeds
-                       │        └─► aggregate_seeds → mean±std booktabs tables
+                       ├─► [Batch B: SHOULD] R1 multi-seed {AC,JD}×{123,7,2024,31}   (sim only; TAQ stays single-seed)
+                       │        └─► aggregate_seeds → mean±std booktabs tables (AC, JD)
                        │
                        ├─► [Batch C: SHOULD] R3 jump sensitivity (needs P1-T3) + R4 impact misspec (eval-only)
                        │
-                       └─► [Batch D: OPTIONAL] R5 width ablation ; TAQ IQN multi-seed
+                       └─► [Batch D: OPTIONAL] R5 width ablation
 ```
 
 ### Ordered batches (each sized to ~overnight, ~8–10 h)
 | Batch | Priority | Contents | Est. wall-clock | Depends on |
 |-------|----------|----------|-----------------|-----------|
 | **A** | **MUST** | AC(42), JD(42) full re-run + TAQ DQN/DDQN(42) retrain, then R2 CVaR sweep on all three | ~4–5 h | P1 all + smoke |
-| **B** | **SHOULD** | R1: AC & JD × seeds {123,7,2024,31} (8 sim runs) + TAQ DQN/DDQN × 4 seeds; then `aggregate_seeds` | ~13–16 h → **split into B1 (sim, ~11 h) + B2 (TAQ, ~4 h)** across two nights | Batch A code paths proven |
+| **B** | **SHOULD** | R1: AC & JD × seeds {123,7,2024,31} (8 sim runs); then `aggregate_seeds` — **sim only** (TAQ stays single-seed by design) | ~11 h → **one night (B1, sim)** | Batch A code paths proven |
 | **C** | **SHOULD** | R3 jump sensitivity (3 levels ×1 seed, 4 agents) + R4 impact misspec (eval-only 3×3) | ~4–6 h | P1-T3; trained agents from A/B |
-| **D** | **OPTIONAL** | R5 width ablation (AC,JD ×{64,128}) + TAQ IQN 5-seed (removes the IQN single-seed asymmetry, see Risk R-4) | ~6–8 h | A |
+| **D** | **OPTIONAL** | R5 width ablation (AC,JD ×{64,128}) | ~2–3 h | A |
 
 ### Thesis-critical path (8-week submission)
 - **MUST (Batch A):** regenerates the three core results tables under one honest architecture + the CVaR frontier figure. Sufficient to make the paper's central claims defensible.
 - **SHOULD (Batches B, C):** mean±std robustness tables and sensitivity/misspecification appendices — expected by a thesis committee.
-- **OPTIONAL (Batch D):** ablation appendix and TAQ-IQN multi-seed symmetry — nice-to-have.
+- **OPTIONAL (Batch D):** DQN/DDQN width-ablation appendix — nice-to-have. (TAQ-IQN multi-seed symmetry removed: the TAQ study is single-seed by design, so there is no asymmetry to fix — see Decision log / Risk R-4.)
 
 ---
 
@@ -192,7 +198,7 @@ Full audit is in **`PAPER_FIXES.md`** (every quantitative claim: *paper says / c
 | **R-1** | A Phase-1 fix silently changes sim behavior (e.g., env/reward). | All Phase-1 changes are surgical + guarded by the smoke test (§0.2) and the param assertion (P1-T2). Work on branch `fix/unify-arch-jd-recalibration`; `git diff main` reviewed before any run. |
 | **R-2** | Overwriting existing results. | **Never write into an existing `results/*` dir.** Before Batch A, `mv` current dirs to `results/_archive_2026-07-16/` (or copy). New runs use seed/param-suffixed dirs. Enforced by convention + a guard in `run_seeds.py` that refuses to write to a non-empty existing path. |
 | **R-3** | JD recalibration numbers land outside the 10–20% target. | P1-T3 unit test gates it; tune `jump_intensity` (0.02–0.05) until P(≥1)∈[0.10,0.20] **before** the expensive JD retrain. |
-| **R-4** | TAQ IQN kept single-seed while DQN/DDQN go multi-seed (asymmetric table). | Report IQN-neutral/CVaR as single-seed with an explicit footnote; offer Batch D (OPTIONAL) to retrain TAQ IQN across seeds for symmetry. |
-| **R-5** | Timing estimates wrong → batches overrun the night. | Phase 0 smoke calibrates per-agent wall-clock; Batch B is pre-split into B1/B2. Re-estimate after Batch A before committing to B. |
+| **R-4** | ~~TAQ IQN kept single-seed while DQN/DDQN go multi-seed (asymmetric table).~~ **Superseded 2026-07-17 — the entire TAQ study is single-seed by design** (seed 42: Batch-A DQN/DDQN + kept IQN). No asymmetry: the whole TAQ table is uniformly single-seed. | **Mitigation:** an explicit **limitation statement** in the empirical-study section (single training seed 42; seed robustness established in the simulation study; the Oct–Dec 2014 window is fixed market data that does not vary with the seed) + a prepared **viva answer**: *"seed robustness is established in simulation; the empirical results are a single-seed case study on fixed market data."* See the Decision log and PAPER_FIXES §4.1 (new limitation item). |
+| **R-5** | Timing estimates wrong → batches overrun the night. | Phase 0 smoke calibrates per-agent wall-clock; Batch B is now **sim-only (one night)**. Re-estimate after Batch A before committing to B. |
 | **R-6** | N7 (non-split-adjusted data) invalidates TAQ results. | Verify data before Batch A eval; if confirmed, this becomes a new Phase-1 data task (out of current scope) — surface to the user, do not auto-fix. |
 | **Rollback** | Any run/fix goes wrong. | Code: `git checkout main` (branch isolates everything). Results: originals live untouched in `results/` (+ archive copy); delete only the new suffixed dirs. Paper: never touched. |
