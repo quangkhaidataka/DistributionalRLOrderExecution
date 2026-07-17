@@ -8,13 +8,15 @@
 
 ---
 
-## Current status: JD calibration scan DONE → recommends (λ_J=0.05, σ_J=0.16), awaiting user confirmation
+## Current status: JD calibration LOCKED (0.05, 0.16) → running the staged full-scale retrain
 
-The 6-cell scan has been run (MPS, one cell per short job via the new `--cell`/`--summarize` flags; ~4–5 min/cell, all exit 0). Results in `results/_jump_scan/summary.{txt,csv}`. **RECOMMENDED: λ_J=0.05, σ_J=0.16** — the only three hard-passing cells are all at λ=0.05 (λ=0.10 dumps ≥70% at σ≤0.12 and busts the tail band at σ=0.16); tie-break (largest IQN-neutral−IQN-CVaR CVaR₉₅ gap) picks σ=0.16 (+0.068) over σ=0.12 (+0.044). Note this **differs from the provisional default σ=0.12** baked into the code. Screening is smoke-scale (5,000 eps) — the real differentiation magnitude comes from the full R.3 retrain (30,000 eps).
+Scan confirmed and **locked: (λ_J=0.05, σ_J=0.16)** is now the permanent default (SimConfig + DEFAULT_SIM_CONFIG; μ_J=0). Pre-declared **fallback (0.05, 0.12)** (invoked only if the full-scale R.4 gate fails — pre-registration, not post-hoc tuning). Old degenerate JD archived (R.0) → `results/_archive_jd_stress_seed42/`; seed42 JD slot is free.
 
-### ▶ Immediate next step (user action)
-1. **Confirm the recommended (λ_J=0.05, σ_J=0.16)** against `results/_jump_scan/summary.txt` (RUNBOOK R.1).
-2. Then: archive old degenerate JD (R.0), JD retrain seed 42 with `--jump-intensity 0.05 --jump-std 0.16` (R.3, CLI override — no code edit needed), JD sweep rerun, new JD gate check (R.4).
+The 30k-ep JD retrain is being run **staged** (one agent per sub-34-min job) via the new `experiments/run_jd_staged.py`, which reproduces the monolithic `run_phase` table exactly (order-independent per-agent RNG reseed added to `train_agent`+`evaluate_all`; validated by an equivalence smoke).
+
+### ▶ Immediate next step
+1. Train DQN → DDQN → IQN-neutral (30k eps each), then `--assemble-eval`, then rerun the JD α-sweep — RUNBOOK R.3 (staged).
+2. R.4 gate report (dump fraction, Std IS, sweep table, differentiation) incl. the FALLBACK RULE. Stop after the gate.
 3. Then Batch B (multi-seed), C (sensitivity/misspec), D (optional).
 
 ---

@@ -70,32 +70,32 @@ cd /Users/user/Desktop/DisRL && caffeinate -i \
 ```
 Then read `results/_jump_scan/summary.txt` — PASS/FAIL per criterion per cell and a **RECOMMENDED** cell (all hard criteria a/b/c pass; tie-break = largest IQN-neutral−IQN-CVaR CVaR₉₅ gap). Tell me the recommended (λ_J, σ_J); I'll confirm it against the summary.
 
-**R.2 — lock in the winning cell** (no code edit required — the override is built in):
-- *Preferred (no edit):* pass the chosen (λ_J, σ_J) via CLI in R.3 (μ_J stays 0).
-- *Permanent:* once final, update the three `jump_*` values in `envs/simulated_env.py` **and** `run_simulation.DEFAULT_SIM_CONFIG` (one line each) so smoke/tests reflect it.
+**R.2 — LOCKED (2026-07-17):** the scan selected **(λ_J=0.05, σ_J=0.16)**; this is now the permanent default in `envs/simulated_env.py` SimConfig **and** `run_simulation.DEFAULT_SIM_CONFIG` (σ 0.12→0.16, μ_J=0). **Pre-declared fallback: (0.05, 0.12)** — see the FALLBACK RULE in R.4 (invoked only if the full-scale gate fails; not post-hoc tuning).
 
-**R.3 — retrain JD seed 42 + rerun the JD sweep** (~1 h; substitute the chosen `<λ> <σ>`):
+**R.3 — retrain JD seed 42 STAGED (one agent per sub-34-min job) + rerun the JD sweep** (~1 h total; run each line as its own kept-awake job). The staged path reproduces the monolithic `run_phase` table exactly (validated by `run_jd_staged.py`'s equivalence smoke); weights cross jobs via checkpoints, so the shared dir accumulates all three agents before assembly:
 ```bash
-cd /Users/user/Desktop/DisRL && caffeinate -i bash -s <<'EOF'
-set -e
-cd /Users/user/Desktop/DisRL
-PY=/Users/user/miniconda3/envs/finrl_env/bin/python3
-$PY experiments/run_seeds.py --sim --envs jump --seeds 42 --jump-intensity <λ> --jump-std <σ> --device mps
-$PY experiments/sweep_cvar_alpha.py --env jump --ckpt-dir results/_seeds/seed42/jump_diffusion/checkpoints
+cd /Users/user/Desktop/DisRL   # PY=/Users/user/miniconda3/envs/finrl_env/bin/python3
+# 1) train one agent per job (30k eps each) into results/_seeds/seed42/jump_diffusion/
+caffeinate -i $PY experiments/run_jd_staged.py --only-agent DQN         --device mps
+caffeinate -i $PY experiments/run_jd_staged.py --only-agent DDQN        --device mps
+caffeinate -i $PY experiments/run_jd_staged.py --only-agent IQN-neutral --device mps
+# 2) restore best-by-val-CVaR95, share IQN weights, evaluate all 7 (split with --eval-agents if >30 min)
+caffeinate -i $PY experiments/run_jd_staged.py --assemble-eval --device mps
+# 3) rerun the α-sweep on the best checkpoint (T4)
+caffeinate -i $PY experiments/sweep_cvar_alpha.py --env jump --ckpt-dir results/_seeds/seed42/jump_diffusion/checkpoints
 echo "=== JD RECALIBRATION DONE ==="
-EOF
 ```
-The sweep auto-selects the best-by-val-CVaR₉₅ checkpoint (T4). Then tell me — I'll produce the updated JD gate report.
+Fallback rerun (only if R.4 fails): add `--jump-std 0.12` to each `run_jd_staged.py` line (into a fresh archived dir; μ_J stays 0). Then tell me — I'll produce the updated JD gate report.
 
 **R.4 — new JD gate checklist** (on `results/_seeds/seed42/jump_diffusion/logs/comparison_table.txt`):
 - **Non-degeneracy:** Std IS **> 0.05 bps** for DQN, IQN-neutral, IQN-CVaR_0.95 (no Std=0.000 collapse).
-- **Dump fraction:** IQN-neutral does **not** dump-at-t0 on ≥50% of episodes (from the scan cell's `metrics.json`).
+- **Dump fraction:** IQN-neutral does **not** dump-at-t0 on ≥50% of episodes (computed at full scale on the retrained IQN-neutral, not the smoke scan).
 - **Meaningful tail:** TWAP CVaR₉₅ ∈ [4, 15] bps.
 - **Differentiation:** IQN-CVaR_0.95 CVaR₉₅ **<** IQN-neutral CVaR₉₅ — the claim the degenerate run couldn't demonstrate.
 - **Param guard:** `IQN … 11462`, `DQN/DDQN … 5190`.
 - **Sweep sanity:** α=1.0 point reproduces the IQN-neutral row (the sweep now uses the best checkpoint, T4).
 
-Proceed to Batch B only if the new JD table passes non-degeneracy **and** shows differentiation; otherwise re-scan with a wider grid (larger σ_J / λ_J).
+**FALLBACK RULE (pre-registered).** If the full-scale gate fails on any of — **dump fraction > 50%**, OR **any learned agent Std IS < 0.05 bps**, OR **IQN-neutral CVaR₉₅ ≥ TWAP CVaR₉₅** — then **recommend one rerun at the pre-declared fallback (0.05, 0.12)** and STOP (do not launch it; do not re-scan or search for a new cell — that would be post-hoc tuning). Proceed to Batch B only if the JD table passes non-degeneracy **and** shows differentiation.
 
 ---
 

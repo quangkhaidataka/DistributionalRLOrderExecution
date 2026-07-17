@@ -62,12 +62,14 @@ class SimConfig(EnvConfig):
     # Intensity is PER PERIOD (used directly as the Poisson rate, no ·dt).
     # SYMMETRIC zero-mean jumps (μ_J = 0): jumps carry no expected drift, so the
     # only incentive to trade faster is tail risk (not directional loss).
-    # Provisional values — the final (λ_J, σ_J) is chosen by
-    # experiments/scan_jump_calibration.py against pre-registered criteria.
+    # LOCKED by experiments/scan_jump_calibration.py (2026-07-17, seed 42): the
+    # cell (λ_J=0.05, σ_J=0.16) passes all pre-registered hard criteria with the
+    # largest neutral−CVaR gap. Pre-declared fallback if a full-scale run fails
+    # the gate: (λ_J=0.05, σ_J=0.12). See DECISION.md / PLAN.md.
     #   E[jumps/episode] = λ_J·N = 0.25,  P(≥1 jump/episode) = 1-exp(-λ_J·N) ≈ 22%.
     jump_intensity : float = 0.05   # λ_J: expected jumps per period (Poisson rate)
     jump_mean      : float = 0.0    # μ_J: mean jump size in $ (0 = symmetric, no drift)
-    jump_std       : float = 0.12   # σ_J: jump size volatility in $ (~12 bps on p0=100)
+    jump_std       : float = 0.16   # σ_J: jump size volatility in $ (~16 bps on p0=100)
 
 
 # ---------------------------------------------------------------------------

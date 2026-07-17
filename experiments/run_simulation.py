@@ -96,12 +96,12 @@ DEFAULT_SIM_CONFIG = dict(
     discount= 0.99,
     ou_theta= 0.15,
     ou_mu   = 100.0,
-    # Symmetric zero-mean jump-diffusion stress scenario (provisional; final
-    # (λ_J, σ_J) chosen by experiments/scan_jump_calibration.py). μ_J=0 removes
-    # the drift confound. See JumpDiffusionEnv for the acceptance criteria.
+    # Symmetric zero-mean jump-diffusion stress scenario. μ_J=0 removes the
+    # drift confound; (λ_J, σ_J) LOCKED by scan_jump_calibration.py (2026-07-17)
+    # to (0.05, 0.16). Pre-declared fallback: (0.05, 0.12). See DECISION.md.
     jump_intensity = 0.05,
     jump_mean      = 0.0,
-    jump_std       = 0.12)
+    jump_std       = 0.16)
 
 # Training
 DEFAULT_TRAIN = dict(
