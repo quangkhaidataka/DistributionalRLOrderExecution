@@ -30,7 +30,14 @@ criterion, and a RECOMMENDED cell (all hard criteria pass; tie-break = largest
 IQN-neutral - IQN-CVaR CVaR_0.95 gap). Refuses non-empty output dirs.
 
 Runtime ~8-10 min/cell on MPS (~1 h total). Usage:
+    # (a) whole grid in one process (~1 h):
     python experiments/scan_jump_calibration.py --device mps
+
+    # (b) ONE cell per command (each ~8-10 min — fits a short job), then
+    #     assemble the summary once all six cells have been run:
+    python experiments/scan_jump_calibration.py --device mps --cell 0.05 0.08
+    ...  # repeat for every (lambda, sigma) in the grid
+    python experiments/scan_jump_calibration.py --summarize
 """
 
 from __future__ import annotations
@@ -242,6 +249,26 @@ def write_summary(cells, out_root):
     print(f'\nWrote {out_root}/summary.{{txt,csv}}')
 
 
+def load_cells(out_root):
+    """Reconstruct the cells list from per-cell config.json/metrics.json.
+
+    Used by --summarize so the six single-cell runs can be assembled into one
+    summary.{txt,csv} without re-training. Cells are returned in grid order
+    (by lambda_J then sigma_J) so the summary ordering is deterministic.
+    """
+    cells = []
+    for d in sorted(out_root.glob('cell_l*_s*')):
+        cfg_p, met_p = d / 'config.json', d / 'metrics.json'
+        if not (cfg_p.exists() and met_p.exists()):
+            continue
+        cfg = json.loads(cfg_p.read_text())
+        payload = json.loads(met_p.read_text())
+        cells.append({'lambda_J': cfg['lambda_J'], 'sigma_J': cfg['sigma_J'],
+                      'metrics': payload['metrics'], 'criteria': payload['criteria']})
+    cells.sort(key=lambda c: (c['lambda_J'], c['sigma_J']))
+    return cells
+
+
 def main():
     ap = argparse.ArgumentParser(description='Jump-diffusion calibration scan')
     ap.add_argument('--episodes', type=int, default=5000, help='Training episodes per learned agent')
@@ -250,9 +277,37 @@ def main():
     ap.add_argument('--device', choices=['cpu', 'mps'], default='cpu')
     ap.add_argument('--lambdas', nargs='+', type=float, default=LAMBDAS)
     ap.add_argument('--sigmas', nargs='+', type=float, default=SIGMAS)
+    ap.add_argument('--cell', nargs=2, type=float, metavar=('LAMBDA', 'SIGMA'),
+                    help='Run exactly ONE grid cell (lambda sigma), writing only '
+                         'its per-cell config.json/metrics.json — no summary. Lets '
+                         'each cell run as a separate short job; assemble afterwards '
+                         'with --summarize.')
+    ap.add_argument('--summarize', action='store_true',
+                    help='Assemble summary.{txt,csv} from existing per-cell '
+                         'metrics.json (no training). Run after all --cell runs.')
+    ap.add_argument('--out-root', default=None,
+                    help='Output root (default results/_jump_scan).')
     args = ap.parse_args()
 
-    out_root = PROJECT_ROOT / 'results' / '_jump_scan'
+    out_root = (Path(args.out_root) if args.out_root
+                else PROJECT_ROOT / 'results' / '_jump_scan')
+
+    if args.summarize:
+        cells = load_cells(out_root)
+        if not cells:
+            raise SystemExit(f'No per-cell results found under {out_root} to summarize.')
+        write_summary(cells, out_root)
+        return
+
+    if args.cell is not None:
+        lam, sig = args.cell
+        run_cell(lam, sig, args.episodes, args.eval_episodes, args.seed,
+                 args.device, out_root, 1, 1)
+        print(f'\nCell (lambda={lam}, sigma={sig}) done. '
+              f'Run "--summarize" after all cells to assemble the summary.')
+        return
+
+    # Whole grid in one process (original behavior).
     grid = [(lam, sig) for lam in args.lambdas for sig in args.sigmas]
     cells = []
     for i, (lam, sig) in enumerate(grid, 1):
