@@ -8,9 +8,11 @@ agent set {TWAP, DQN, IQN-neutral, IQN-CVaR_0.95} at each. Requires the P1-T3
 fix (per-period intensity). One seed.
 
 Levels (per-period Poisson rate; P(>=1 jump/episode) with N=5):
-    low  : lambda = 0.01  (~5%)
-    base : lambda = 0.03  (~14%, the default stress calibration)
-    high : lambda = 0.06  (~26%)
+    Re-centred on the LOCKED calibration (λ_J=0.05, σ_J=0.16, μ_J=0):
+    low  : lambda = 0.025  (P(≥1 jump/ep) ≈ 12%)
+    base : lambda = 0.05   (≈ 22%, the locked calibration)
+    high : lambda = 0.10   (≈ 39%)
+    σ_J is held at the locked 0.16 (from DEFAULT_SIM_CONFIG); only λ_J varies.
 
 Writes results/jump_sensitivity_<level>/ (config.json, all_results.json,
 table.txt, checkpoints/) and a cross-level summary
@@ -43,7 +45,7 @@ from evaluation.metrics import format_comparison_table
 from exp_utils import dump_config_json, refuse_if_nonempty
 import run_simulation as RS
 
-LEVELS = [('low', 0.01), ('base', 0.03), ('high', 0.06)]
+LEVELS = [('low', 0.025), ('base', 0.05), ('high', 0.10)]   # re-centred on locked λ_J=0.05
 AGENTS_REPORTED = ['TWAP', 'DQN', 'IQN-neutral', 'IQN-CVaR_0.95']
 
 
@@ -136,6 +138,12 @@ def write_summary(by_level):
     print(f'\nWrote {out_txt} and {out_csv}')
 
 
+def load_level(level):
+    """Reconstruct one level's {agent: result} from its saved all_results.json."""
+    p = PROJECT_ROOT / 'results' / f'jump_sensitivity_{level}' / 'logs' / 'all_results.json'
+    return {r['agent_name']: r for r in json.load(open(p))}
+
+
 def main():
     ap = argparse.ArgumentParser(description='R3 jump-parameter sensitivity')
     ap.add_argument('--episodes', type=int, default=None,
@@ -145,7 +153,15 @@ def main():
     ap.add_argument('--device', choices=['cpu', 'mps'], default='cpu')
     ap.add_argument('--levels', nargs='+', default=[lv for lv, _ in LEVELS],
                     choices=[lv for lv, _ in LEVELS])
+    ap.add_argument('--summarize', action='store_true',
+                    help='Build the cross-level summary from existing level dirs '
+                         '(no training). Use after staging one level per job.')
     args = ap.parse_args()
+
+    all_levels = [lv for lv, _ in LEVELS]
+    if args.summarize:
+        write_summary({lv: load_level(lv) for lv in args.levels})
+        return
 
     episodes = args.episodes or RS.DEFAULT_TRAIN['n_episodes']
     lam_by_level = dict(LEVELS)
@@ -153,7 +169,11 @@ def main():
     for level in args.levels:
         by_level[level] = run_level(level, lam_by_level[level], episodes,
                                     args.eval_episodes, args.seed, args.device)
-    write_summary(by_level)
+    if set(args.levels) == set(all_levels):
+        write_summary(by_level)
+    else:
+        print(f'Ran levels {args.levels}. Run --summarize after all levels for '
+              f'the cross-level table.')
 
 
 if __name__ == '__main__':
