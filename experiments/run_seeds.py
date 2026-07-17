@@ -50,14 +50,18 @@ SIM_ENV_NAMES = {'ac': 'almgren_chriss', 'ou': 'mean_reverting', 'jump': 'jump_d
 # Simulated envs (AC / MeanReverting / Jump) via run_phase
 # ---------------------------------------------------------------------------
 
-def run_sim_seeds(env_shorts, seeds, episodes, eval_episodes, device, base):
+def run_sim_seeds(env_shorts, seeds, episodes, eval_episodes, device, base,
+                  jump_overrides=None):
     base = Path(base)
     for seed in seeds:
         for short in env_shorts:
             env_name = SIM_ENV_NAMES[short]
             out_root = base / f'seed{seed}'
             refuse_if_nonempty(out_root / env_name)
-            sim_config = SimConfig(**RS.DEFAULT_SIM_CONFIG)
+            cfg_dict = dict(RS.DEFAULT_SIM_CONFIG)
+            if jump_overrides:                 # e.g. the scan-selected (λ_J, σ_J)
+                cfg_dict.update(jump_overrides)
+            sim_config = SimConfig(**cfg_dict)
             print(f'\n### SIM {env_name} seed={seed} -> {out_root}/{env_name}')
             RS.run_phase(
                 env_name=env_name, sim_config=sim_config,
@@ -158,15 +162,28 @@ def main():
     ap.add_argument('--iqn-ckpt',
                     default='results/taq/AAPL/fold1/checkpoints/IQN-neutral_best.pt',
                     help='Kept TAQ IQN-neutral checkpoint to reuse (D2)')
+    # Optional jump-param overrides (e.g. the scan-selected calibration) — sim only.
+    ap.add_argument('--jump-intensity', type=float, default=None, help='Override λ_J (sim)')
+    ap.add_argument('--jump-std', type=float, default=None, help='Override σ_J (sim)')
+    ap.add_argument('--jump-mean', type=float, default=None, help='Override μ_J (sim; default 0.0)')
     args = ap.parse_args()
 
     if not (args.sim or args.taq):
         ap.error('specify --sim and/or --taq')
 
+    jump_overrides = {}
+    if args.jump_intensity is not None:
+        jump_overrides['jump_intensity'] = args.jump_intensity
+    if args.jump_std is not None:
+        jump_overrides['jump_std'] = args.jump_std
+    if args.jump_mean is not None:
+        jump_overrides['jump_mean'] = args.jump_mean
+
     if args.sim:
         ep = args.episodes or RS.DEFAULT_TRAIN['n_episodes']
         run_sim_seeds(args.envs, args.seeds, ep, args.eval_episodes,
-                      args.device, PROJECT_ROOT / args.sim_base)
+                      args.device, PROJECT_ROOT / args.sim_base,
+                      jump_overrides=jump_overrides or None)
     if args.taq:
         ep = args.episodes or RT.N_EPISODES
         run_taq_dqn_ddqn_seeds(args.seeds, ep, args.eval_episodes, args.device,

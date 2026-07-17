@@ -52,6 +52,53 @@ Also confirm `results/taq/AAPL_seed42/logs/all_results.json` looks sane (IQN-CVa
 
 ---
 
+## JD recalibration (between Batch A and Batch B) — required before Batch B
+
+Batch A found the first JD calibration **degenerate**: with adverse jumps (μ_J=−0.30) immediate full liquidation dominated, so every agent collapsed to dump-at-t0 (IQN Std IS = 0.000) and IQN-CVaR ≡ IQN-neutral. The env is now **symmetric (μ_J=0)**; the final (λ_J, σ_J) is chosen by a calibration scan against pre-registered criteria. Do this **before** Batch B so the multi-seed JD is scientifically meaningful.
+
+**R.0 — archive the old degenerate JD run** (frees the seed42 JD slot; keeps it as an "extreme stress" appendix scenario). The seed42 JD slot **must** be free for the re-run (`run_seeds` refuses non-empty dirs):
+```bash
+cd /Users/user/Desktop/DisRL
+mv results/_seeds/seed42/jump_diffusion results/_archive_jd_stress_seed42
+# leave results/_seeds/seed42/almgren_chriss and results/taq/AAPL_seed42 in place
+```
+
+**R.1 — run the calibration scan** (~1 h on MPS, 6 cells; your terminal, kept awake):
+```bash
+cd /Users/user/Desktop/DisRL && caffeinate -i \
+  /Users/user/miniconda3/envs/finrl_env/bin/python3 experiments/scan_jump_calibration.py --device mps
+```
+Then read `results/_jump_scan/summary.txt` — PASS/FAIL per criterion per cell and a **RECOMMENDED** cell (all hard criteria a/b/c pass; tie-break = largest IQN-neutral−IQN-CVaR CVaR₉₅ gap). Tell me the recommended (λ_J, σ_J); I'll confirm it against the summary.
+
+**R.2 — lock in the winning cell** (no code edit required — the override is built in):
+- *Preferred (no edit):* pass the chosen (λ_J, σ_J) via CLI in R.3 (μ_J stays 0).
+- *Permanent:* once final, update the three `jump_*` values in `envs/simulated_env.py` **and** `run_simulation.DEFAULT_SIM_CONFIG` (one line each) so smoke/tests reflect it.
+
+**R.3 — retrain JD seed 42 + rerun the JD sweep** (~1 h; substitute the chosen `<λ> <σ>`):
+```bash
+cd /Users/user/Desktop/DisRL && caffeinate -i bash -s <<'EOF'
+set -e
+cd /Users/user/Desktop/DisRL
+PY=/Users/user/miniconda3/envs/finrl_env/bin/python3
+$PY experiments/run_seeds.py --sim --envs jump --seeds 42 --jump-intensity <λ> --jump-std <σ> --device mps
+$PY experiments/sweep_cvar_alpha.py --env jump --ckpt-dir results/_seeds/seed42/jump_diffusion/checkpoints
+echo "=== JD RECALIBRATION DONE ==="
+EOF
+```
+The sweep auto-selects the best-by-val-CVaR₉₅ checkpoint (T4). Then tell me — I'll produce the updated JD gate report.
+
+**R.4 — new JD gate checklist** (on `results/_seeds/seed42/jump_diffusion/logs/comparison_table.txt`):
+- **Non-degeneracy:** Std IS **> 0.05 bps** for DQN, IQN-neutral, IQN-CVaR_0.95 (no Std=0.000 collapse).
+- **Dump fraction:** IQN-neutral does **not** dump-at-t0 on ≥50% of episodes (from the scan cell's `metrics.json`).
+- **Meaningful tail:** TWAP CVaR₉₅ ∈ [4, 15] bps.
+- **Differentiation:** IQN-CVaR_0.95 CVaR₉₅ **<** IQN-neutral CVaR₉₅ — the claim the degenerate run couldn't demonstrate.
+- **Param guard:** `IQN … 11462`, `DQN/DDQN … 5190`.
+- **Sweep sanity:** α=1.0 point reproduces the IQN-neutral row (the sweep now uses the best checkpoint, T4).
+
+Proceed to Batch B only if the new JD table passes non-degeneracy **and** shows differentiation; otherwise re-scan with a wider grid (larger σ_J / λ_J).
+
+---
+
 ## Batch B — SHOULD (robustness, remaining seeds) · split across two nights
 
 ### B1 — sim multi-seed · ~11 h
