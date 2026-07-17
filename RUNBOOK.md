@@ -35,13 +35,12 @@ python3 experiments/run_seeds.py --sim --envs ac jump --seeds 42 --device mps
 # A.2 — TAQ DQN/DDQN retrain, seed 42 (IQN reused from results/taq/AAPL; writes results/taq/AAPL_seed42/)
 python3 experiments/run_seeds.py --taq --seeds 42 --device mps
 
-# A.3 — R2 CVaR-α frontier (eval-only). Point --checkpoint at the seed-42 IQN-neutral
-#        checkpoint (use the ep printed as "Restored best checkpoint: ep=…", or the latest):
-python3 experiments/sweep_cvar_alpha.py --env jump \
-    --checkpoint "$(ls -t results/_seeds/seed42/jump_diffusion/checkpoints/IQN-neutral_ep*.pt | head -1)"
-python3 experiments/sweep_cvar_alpha.py --env ac \
-    --checkpoint "$(ls -t results/_seeds/seed42/almgren_chriss/checkpoints/IQN-neutral_ep*.pt | head -1)"
-python3 experiments/sweep_cvar_alpha.py --env taq        # uses kept results/taq/AAPL IQN
+# A.3 — R2 CVaR-α frontier (eval-only). Pass --ckpt-dir; the sweep auto-selects the
+#        best-by-val-CVaR₉₅ checkpoint from the training log (T4 — no fragile `ls -t`,
+#        which grabbed a late/degraded epoch in the first Batch A). Prints the ep chosen.
+python3 experiments/sweep_cvar_alpha.py --env jump --ckpt-dir results/_seeds/seed42/jump_diffusion/checkpoints
+python3 experiments/sweep_cvar_alpha.py --env ac   --ckpt-dir results/_seeds/seed42/almgren_chriss/checkpoints
+python3 experiments/sweep_cvar_alpha.py --env taq        # kept results/taq/AAPL IQN (IQN-neutral_best.pt)
 ```
 
 ### ⛔ CHECKPOINT — review before launching Batch B

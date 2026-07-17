@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import csv
 import glob
+import json
 import sys
 from pathlib import Path
 
@@ -68,17 +69,52 @@ def build_env(env_key):
     return cls(cfg), env_name, PROJECT_ROOT / 'results' / env_name / 'checkpoints'
 
 
-def find_checkpoint(ckpt_arg, ckpt_dir):
-    if ckpt_arg:
-        return Path(ckpt_arg)
+def _ep_of(path):
+    """Numeric episode from an IQN-neutral_ep<N>.pt filename."""
+    return int(Path(path).stem.split('_ep')[-1])
+
+
+def find_best_checkpoint(ckpt_dir):
+    """Select the IQN-neutral checkpoint at the epoch with the LOWEST validation
+    CVaR_0.95 — the same criterion run_phase uses to restore the best model.
+
+    This avoids grabbing the newest (possibly late/degraded) checkpoint, which is
+    exactly what made the Batch-A sim sweeps invalid (JD ep30000 had regressed to
+    val CVaR_0.95 17.6 vs the best ep14000's 2.08). Reads the sibling training log
+    ../logs/IQN-neutral_training.json; falls back to _best.pt, then newest ep.
+    """
+    ckpt_dir = Path(ckpt_dir)
+    log = ckpt_dir.parent / 'logs' / 'IQN-neutral_training.json'
+    if log.exists():
+        eh = json.load(open(log)).get('eval_history', [])
+        evals = [(e['episode'], e.get('CVaR_0.95_bps')) for e in eh
+                 if e.get('CVaR_0.95_bps') is not None]
+        if evals:
+            best_ep, best_cvar = min(evals, key=lambda x: x[1])
+            cand = ckpt_dir / f'IQN-neutral_ep{best_ep}.pt'
+            if cand.exists():
+                print(f'  [checkpoint] best-by-val-CVaR95: ep={best_ep} '
+                      f'(val CVaR95={best_cvar:.4f} bps) — from {log.name}')
+                return cand
+            print(f'  [checkpoint] log picked ep={best_ep} but {cand.name} missing; falling back.')
     best = ckpt_dir / 'IQN-neutral_best.pt'
     if best.exists():
+        print(f'  [checkpoint] using {best.name} (no usable training log — e.g. kept TAQ ckpt)')
         return best
-    eps = sorted(glob.glob(str(ckpt_dir / 'IQN-neutral_ep*.pt')))
+    eps = sorted(glob.glob(str(ckpt_dir / 'IQN-neutral_ep*.pt')), key=_ep_of)
     if eps:
+        print(f'  [checkpoint] WARNING: no eval_history/_best; using newest {Path(eps[-1]).name} '
+              f'(may be late/degraded).')
         return Path(eps[-1])
     raise FileNotFoundError(
         f'No IQN-neutral checkpoint found in {ckpt_dir} (pass --checkpoint).')
+
+
+def find_checkpoint(ckpt_arg, ckpt_dir):
+    if ckpt_arg:
+        print(f'  [checkpoint] using explicit --checkpoint {ckpt_arg}')
+        return Path(ckpt_arg)
+    return find_best_checkpoint(ckpt_dir)
 
 
 def evaluate_at_alpha(agent, env, n_eval, seed, alpha):
@@ -103,7 +139,12 @@ def evaluate_at_alpha(agent, env, n_eval, seed, alpha):
 def main():
     ap = argparse.ArgumentParser(description='R2 CVaR-alpha sweep (eval-only)')
     ap.add_argument('--env', required=True, choices=list(SIM_ENV_NAMES) + ['taq'])
-    ap.add_argument('--checkpoint', default=None, help='IQN-neutral checkpoint (.pt)')
+    ap.add_argument('--checkpoint', default=None,
+                    help='Explicit IQN-neutral checkpoint (.pt); overrides auto-selection')
+    ap.add_argument('--ckpt-dir', default=None,
+                    help='Checkpoint dir to auto-select the best-by-val-CVaR ckpt from '
+                         '(e.g. results/_seeds/seed42/<env>/checkpoints). Default: '
+                         'results/<env>/checkpoints.')
     ap.add_argument('--n-eval', type=int, default=10000)
     ap.add_argument('--seed', type=int, default=42)
     ap.add_argument('--alphas', nargs='+', type=float, default=ALPHAS)
@@ -111,6 +152,8 @@ def main():
     args = ap.parse_args()
 
     env, tag, ckpt_dir = build_env(args.env)
+    if args.ckpt_dir:
+        ckpt_dir = Path(args.ckpt_dir)
     ckpt = find_checkpoint(args.checkpoint, ckpt_dir)
     state_dim, n_actions = env.state_dim, env.n_actions
 
