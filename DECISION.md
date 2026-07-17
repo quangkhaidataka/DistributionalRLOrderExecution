@@ -24,8 +24,10 @@
 - **Recalibration #1 (adverse) → REJECTED as degenerate.** μ_J=-0.30, σ_J=0.40 gave a strong negative drift (N·λ·μ_J≈-4.5 bps) on top of the tail, so immediate full liquidation (certain ~2.08 bps) dominated and every agent collapsed to dump-at-t0 (IQN Std IS=0.000, IQN-CVaR ≡ IQN-neutral). Batch A exposed this.
 - **Recalibration #2 (CURRENT): symmetric, scan-selected.**
   - **μ_J = 0 (symmetric)** — permanently removes the drift confound so the only reason to trade faster is tail risk (the CVaR story).
-  - **Final (λ_J, σ_J) chosen by `scan_jump_calibration.py`** over λ∈{0.05,0.10} × σ_J∈{0.08,0.12,0.16}. Provisional default until the scan decides: **λ=0.05, σ=0.12**.
+  - **Final (λ_J, σ_J) chosen by `scan_jump_calibration.py`** over λ∈{0.05,0.10} × σ_J∈{0.08,0.12,0.16}. Provisional default in code: λ=0.05, σ=0.12.
   - **Pre-registered acceptance criteria** (hard = a,b,c; soft = d): (a) Std IS > 0.05 bps for every learned agent; (b) IQN-neutral first-action dump fraction < 50%; (c) TWAP CVaR₉₅ ∈ [4,15] bps; (d) IQN-CVaR₀.₉₅ CVaR₉₅ ≤ IQN-neutral. Recommended cell = all hard pass, tie-break = largest neutral−CVaR CVaR gap.
+  - **Scan run 2026-07-17 (seed 42, MPS, 5,000-ep smoke scale) → recommends (λ_J=0.05, σ_J=0.16)** (`results/_jump_scan/summary.{txt,csv}`). Hard-pass cells were all at λ=0.05 ((0.05,0.08),(0.05,0.12),(0.05,0.16)); λ=0.10 fails — dump ≥70% at σ≤0.12 and TWAP CVaR₉₅=17.5>15 at σ=0.16. Tie-break picked σ=0.16 (gap +0.068) over σ=0.12 (+0.044); (0.05,0.08) had a negative gap. **This overrides the provisional σ=0.12.** To lock: pass `--jump-intensity 0.05 --jump-std 0.16` in R.3 (no code edit) — pending user confirmation. Gaps are small at smoke scale; the full R.3 retrain (30,000 ep) sets the paper number.
+  - **Scan runnable one-cell-per-job:** `scan_jump_calibration.py --cell λ σ` runs a single cell (~4–5 min on MPS), `--summarize` assembles the table from per-cell `metrics.json`. *Why:* the 6-cell grid is ~1 h in one process, over the harness's ~34-min background-job reap limit.
 - **Old degenerate JD run is retained** at `results/_archive_jd_stress_seed42/` as a potential "extreme stress" appendix.
 
 ## Checkpoint selection

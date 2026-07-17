@@ -8,13 +8,13 @@
 
 ---
 
-## Current status: paused before the JD calibration scan
+## Current status: JD calibration scan DONE → recommends (λ_J=0.05, σ_J=0.16), awaiting user confirmation
 
-Everything up to and including the **JD recalibration code (T1–T5)** is committed and green. The next action is the **user** running the calibration scan in their own terminal (Phase-3 compute is run by the user — the harness kills long background jobs at ~34 min).
+The 6-cell scan has been run (MPS, one cell per short job via the new `--cell`/`--summarize` flags; ~4–5 min/cell, all exit 0). Results in `results/_jump_scan/summary.{txt,csv}`. **RECOMMENDED: λ_J=0.05, σ_J=0.16** — the only three hard-passing cells are all at λ=0.05 (λ=0.10 dumps ≥70% at σ≤0.12 and busts the tail band at σ=0.16); tie-break (largest IQN-neutral−IQN-CVaR CVaR₉₅ gap) picks σ=0.16 (+0.068) over σ=0.12 (+0.044). Note this **differs from the provisional default σ=0.12** baked into the code. Screening is smoke-scale (5,000 eps) — the real differentiation magnitude comes from the full R.3 retrain (30,000 eps).
 
 ### ▶ Immediate next step (user action)
-1. Run `experiments/scan_jump_calibration.py` (RUNBOOK "JD recalibration" step R.1) → read `results/_jump_scan/summary.txt` → report the RECOMMENDED (λ_J, σ_J) cell.
-2. Then: archive old degenerate JD (R.0), JD retrain seed 42 with the winning calibration (R.3), JD sweep rerun, new JD gate check (R.4).
+1. **Confirm the recommended (λ_J=0.05, σ_J=0.16)** against `results/_jump_scan/summary.txt` (RUNBOOK R.1).
+2. Then: archive old degenerate JD (R.0), JD retrain seed 42 with `--jump-intensity 0.05 --jump-std 0.16` (R.3, CLI override — no code edit needed), JD sweep rerun, new JD gate check (R.4).
 3. Then Batch B (multi-seed), C (sensitivity/misspec), D (optional).
 
 ---
@@ -56,11 +56,16 @@ Everything up to and including the **JD recalibration code (T1–T5)** is commit
 - **T4** `sweep_cvar_alpha.py` — select **best-by-val-CVaR₉₅** checkpoint (not newest) + `--ckpt-dir`.
 - **T5** RUNBOOK "JD recalibration" section + `run_seeds.py --jump-intensity/--jump-std` overrides.
 
+### JD calibration scan executed (seed 42, MPS)
+- Added `--cell λ σ` / `--summarize` / `--out-root` to `scan_jump_calibration.py` so the ~1 h grid runs **one cell per short job** (the harness reaps long background jobs at ~34 min); whole-grid path unchanged. Committed.
+- Ran all 6 cells (λ∈{0.05,0.10}×σ∈{0.08,0.12,0.16}, μ=0), ~4–5 min each, all exit 0 → `results/_jump_scan/summary.{txt,csv}`.
+- **Hard-pass cells: (0.05,0.08), (0.05,0.12), (0.05,0.16)**; λ=0.10 all fail (dump ≥70% at σ≤0.12; TWAP CVaR₉₅=17.5>15 at σ=0.16). **RECOMMENDED (0.05, 0.16)** (largest gap +0.068). Differentiation (d, soft) holds for (0.05,0.12) and (0.05,0.16). Awaiting user confirmation before R.3.
+
 ---
 
 ## Not done / open
 
-- **Run the JD calibration scan** and pick the final (λ_J, σ_J) — pending (user compute).
+- **Confirm the scan's recommended (λ_J=0.05, σ_J=0.16)** and lock it — pending (user).
 - **JD retrain** seed 42 with the final calibration + JD sweep rerun + new gate.
 - **Batch B / C / D** (multi-seed, sensitivity/misspec, ablations) — not started.
 - **`PAPER_FIXES.md` number updates** after retrains (JD table, DQN/DDQN rows, abstract percentages) — WILL-CHANGE rows still placeholders. Note: **unified DQN (hidden=64) is worse than the old 128** on TAQ (CVaR₉₅ 19.7 vs 6.30) — feed to the fair-comparison narrative.
