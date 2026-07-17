@@ -308,15 +308,20 @@ try:
     p_ge1    = float((ep_jumps >= 1).mean())
     expected = jd_cfg.jump_intensity * jd_cfg.N
 
+    # Calibration-derived band (not hardcoded): P(≥1) = 1 - exp(-λ_J·N).
+    p_expected = 1.0 - np.exp(-expected)
     check("E[jumps/episode] ≈ λ_J·N (±5%)",
           abs(e_jumps - expected) / expected < 0.05,
           f"E={e_jumps:.4f}, λ_J·N={expected:.4f}")
-    check("P(≥1 jump/episode) ∈ [0.10, 0.20] (rare-jump regime)",
-          0.10 <= p_ge1 <= 0.20,
-          f"P(≥1)={p_ge1:.3f}")
+    check("P(≥1 jump/episode) ≈ 1-exp(-λ_J·N) (±0.03)",
+          abs(p_ge1 - p_expected) < 0.03,
+          f"P(≥1)={p_ge1:.3f}, target={p_expected:.3f}")
     check("No ·dt inflation (E[jumps/ep] < 1, not ≈18)",
           e_jumps < 1.0,
           f"E={e_jumps:.4f}")
+    check("Jumps are symmetric (jump_mean == 0.0)",
+          jd_cfg.jump_mean == 0.0,
+          f"jump_mean={jd_cfg.jump_mean}")
 except Exception as e:
     check("Jump-diffusion rate", False, str(e))
     traceback.print_exc()
