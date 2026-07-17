@@ -54,6 +54,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+import torch
 
 # ── Project imports ─────────────────────────────────────────────────────────
 # Ensure project root is on sys.path
@@ -115,6 +116,21 @@ DEFAULT_TRAIN = dict(
 # CVaR levels to test
 CVAR_ALPHAS = [0.90, 0.95]
 
+# Per-agent offsets for the order-independent training RNG (match the
+# construction-seed offsets in build_agents). Agents consume the GLOBAL torch/np
+# RNG (ε-greedy, replay sampling, IQN τ); reseeding per agent at the start of
+# training/eval makes each agent depend only on its own seed — independent of
+# any other agent trained or evaluated earlier in the same process. THIS is what
+# lets the staged (one-agent-per-process) path reproduce a monolithic run
+# exactly. The env RNG is already isolated (BaseExecutionEnv.seed()).
+_TRAIN_SEED_OFFSET = {'DQN': 0, 'DDQN': 1, 'QR-DQN': 2, 'IQN-neutral': 3}
+
+
+def _seed_global_rng(seed: int) -> None:
+    """Reset the GLOBAL torch + numpy RNG to a fixed state (order-independence)."""
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+
 
 # ============================================================================
 # Training loop
@@ -146,6 +162,12 @@ def train_agent(
     env.seed(seed)
     if eval_env is not None:
         eval_env.seed(seed + 10_000)
+
+    # Order-independent training RNG: reseed the global torch/np RNG with a
+    # per-agent seed so this agent's training does not depend on whatever was
+    # run before it in the same process (see _TRAIN_SEED_OFFSET). Enables the
+    # staged one-agent-per-job path to reproduce the monolithic run exactly.
+    _seed_global_rng(seed + _TRAIN_SEED_OFFSET.get(getattr(agent, 'name', ''), 0))
 
     log = {
         'losses'          : [],
@@ -323,6 +345,11 @@ def evaluate_all(
     for name, agent in agents.items():
         print(f'  Evaluating {name}...')
         env.seed(seed)
+        # Order-independent eval RNG: IQN eval-mode samples τ from the global
+        # torch RNG, so reseed per agent (same eval seed for all) to make each
+        # agent's evaluation independent of agent order. This lets a staged /
+        # split (--eval-agents) eval reproduce the monolithic table exactly.
+        _seed_global_rng(seed)
 
         tracker = EpisodeTracker()
         for ep in range(n_eval):
@@ -441,6 +468,56 @@ def share_iqn_weights(agents: Dict[str, object]) -> None:
 
 
 # ============================================================================
+# Shared output serialization (used by run_phase AND the staged path so both
+# write byte-identical training logs / comparison tables)
+# ============================================================================
+
+def save_training_log(log: Dict, path: Path) -> None:
+    """Serialize a train_agent() log to JSON (identical format for both paths)."""
+    serialisable = {
+        k: v if not isinstance(v, np.ndarray) else v.tolist()
+        for k, v in log.items()
+    }
+    for entry in serialisable.get('eval_history', []):
+        for ek, ev in entry.items():
+            if isinstance(ev, (np.floating, np.integer)):
+                entry[ek] = float(ev)
+    with open(path, 'w') as f:
+        json.dump(serialisable, f, indent=2, default=str)
+
+
+def save_eval_outputs(all_results: List[Dict], is_dict: Dict[str, np.ndarray],
+                      log_dir: Path) -> str:
+    """Write is_arrays.pkl + comparison_table.txt + all_results.json.
+
+    `all_results` must already be in the canonical (build_agents) agent order;
+    `is_dict` maps agent_name → IS array in bps. Returns the table string.
+    """
+    import pickle
+    with open(log_dir / 'is_arrays.pkl', 'wb') as f:
+        pickle.dump(is_dict, f)
+
+    table = format_comparison_table(all_results, bps=True)
+    with open(log_dir / 'comparison_table.txt', 'w') as f:
+        f.write(table)
+
+    results_json = []
+    for r in all_results:
+        serialisable = {}
+        for k, v in r.items():
+            if isinstance(v, (np.floating, np.integer)):
+                serialisable[k] = float(v)
+            elif isinstance(v, np.ndarray):
+                serialisable[k] = v.tolist()
+            else:
+                serialisable[k] = v
+        results_json.append(serialisable)
+    with open(log_dir / 'all_results.json', 'w') as f:
+        json.dump(results_json, f, indent=2)
+    return table
+
+
+# ============================================================================
 # Full experiment pipeline
 # ============================================================================
 
@@ -533,20 +610,9 @@ def run_phase(
             print(f'  Done in {log["wall_time"]:.0f}s '
                   f'({len(log["losses"]):,} gradient steps)\n')
 
-        # Save training logs
+        # Save training logs (shared serializer — staged path writes the same)
         for name, log in training_logs.items():
-            log_path = log_dir / f'{name}_training.json'
-            serialisable = {
-                k: v if not isinstance(v, np.ndarray) else v.tolist()
-                for k, v in log.items()
-            }
-            # Convert numpy floats in eval_history
-            for entry in serialisable.get('eval_history', []):
-                for ek, ev in entry.items():
-                    if isinstance(ev, (np.floating, np.integer)):
-                        entry[ek] = float(ev)
-            with open(log_path, 'w') as f:
-                json.dump(serialisable, f, indent=2, default=str)
+            save_training_log(log, log_dir / f'{name}_training.json')
 
     elif checkpoint_path is not None:
         print(f'\nLoading checkpoints from {checkpoint_path}...')
@@ -566,47 +632,13 @@ def run_phase(
         agents, eval_env, n_eval=n_eval, seed=seed + 99_999,
     )
 
-    # Save raw IS arrays for plotting
-    import pickle
-    is_dict = {}
-    for name, tracker in trackers.items():
-        is_dict[name] = np.array(tracker.is_values) * 1e4
-    with open(log_dir / 'is_arrays.pkl', 'wb') as f:
-        pickle.dump(is_dict, f)
-
-    # Regime analysis (only for regime-switching env)
-    # regime_results = None
-    # if env_name == 'regime_switching':
-    #     print('\nRegime-conditioned evaluation...')
-    #     regime_results = evaluate_by_regime(
-    #         agents, eval_env, n_eval=n_eval, seed=seed + 99_999,
-    #     )
-
-    # ── Step 6: Tables ────────────────────────────────────────
+    # ── Step 6: Tables + raw IS arrays (shared serializer) ────
+    is_dict = {name: np.array(tr.is_values) * 1e4 for name, tr in trackers.items()}
     print(f'\n{"="*60}')
     print(f'  Results: {env_name}')
     print(f'{"="*60}')
-    table = format_comparison_table(all_results, bps=True)
+    table = save_eval_outputs(all_results, is_dict, log_dir)
     print(table)
-
-    # Save table
-    with open(log_dir / 'comparison_table.txt', 'w') as f:
-        f.write(table)
-
-    # Save raw results as JSON
-    results_json = []
-    for r in all_results:
-        serialisable = {}
-        for k, v in r.items():
-            if isinstance(v, (np.floating, np.integer)):
-                serialisable[k] = float(v)
-            elif isinstance(v, np.ndarray):
-                serialisable[k] = v.tolist()
-            else:
-                serialisable[k] = v
-        results_json.append(serialisable)
-    with open(log_dir / 'all_results.json', 'w') as f:
-        json.dump(results_json, f, indent=2)
 
     # ── Step 7: Figures ───────────────────────────────────────
     print('\nGenerating figures...')
@@ -693,6 +725,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument('--eval-freq', type=int,
                    default=DEFAULT_TRAIN['eval_freq'],
                    help='Evaluate every N training episodes')
+    p.add_argument('--checkpoint-freq', type=int,
+                   default=DEFAULT_TRAIN['checkpoint_freq'],
+                   help='Save a checkpoint every N training episodes '
+                        '(must divide --episodes for best-ckpt restore to find a file)')
     p.add_argument('--seed', type=int, default=DEFAULT_TRAIN['seed'],
                    help='Global random seed')
     p.add_argument('--results-dir', type=str, default='results',
@@ -715,8 +751,9 @@ def main():
         args.episodes = 100
         args.eval_episodes = 200
         args.eval_freq = 50
+        args.checkpoint_freq = 50
         args.results_dir = 'results/_smoke'
-        print('  [--smoke] 100 episodes, eval 200, eval_freq 50 -> results/_smoke')
+        print('  [--smoke] 100 episodes, eval 200, eval_freq 50, ckpt_freq 50 -> results/_smoke')
 
     results_dir = Path(args.results_dir)
     sim_config  = SimConfig(**DEFAULT_SIM_CONFIG)
@@ -748,7 +785,7 @@ def main():
             n_episodes      = args.episodes,
             n_eval          = args.eval_episodes,
             eval_freq       = args.eval_freq,
-            checkpoint_freq = DEFAULT_TRAIN['checkpoint_freq'],
+            checkpoint_freq = args.checkpoint_freq,
             seed            = args.seed,
             results_dir     = results_dir,
             eval_only       = args.eval_only,

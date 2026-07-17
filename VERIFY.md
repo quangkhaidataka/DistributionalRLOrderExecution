@@ -122,15 +122,15 @@ python3 experiments/run_tag.py        --help 2>/dev/null | grep -q -- "--smoke" 
 ## JD-recalibration fast checks (T1–T4) — < 30 s total, no training
 
 ```bash
-# --- A12 (T1): jump defaults symmetric provisional (both places) ---
+# --- A12 (T1): jump defaults symmetric LOCKED (both places) ---
 python3 -c "
 import sys; sys.path.insert(0,'experiments')
 from envs import SimConfig
 import run_simulation as RS
 c, d = SimConfig(), RS.DEFAULT_SIM_CONFIG
-assert (c.jump_intensity, c.jump_mean, c.jump_std) == (0.05, 0.0, 0.12)
-assert (d['jump_intensity'], d['jump_mean'], d['jump_std']) == (0.05, 0.0, 0.12)
-print('A12 OK (T1): jump defaults symmetric 0.05/0.0/0.12 in SimConfig + DEFAULT_SIM_CONFIG')" 2>/dev/null
+assert (c.jump_intensity, c.jump_mean, c.jump_std) == (0.05, 0.0, 0.16)
+assert (d['jump_intensity'], d['jump_mean'], d['jump_std']) == (0.05, 0.0, 0.16)
+print('A12 OK (T1): jump defaults LOCKED 0.05/0.0/0.16 in SimConfig + DEFAULT_SIM_CONFIG')" 2>/dev/null
 
 # --- A13 (T2): scan criteria logic + dump-action index ---
 python3 -c "
@@ -169,6 +169,32 @@ print('A15 OK (T4): sweep selects best-by-val-CVaR ep2000, not newest ep3000')" 
 - `A13 OK (T2): ...`
 - A14 → two ✓ lines: `P(≥1 jump/episode) ≈ 1-exp(-λ_J·N) (±0.03)` and `Jumps are symmetric (jump_mean == 0.0)`
 - `A15 OK (T4): ...`
+
+---
+
+## Staged-execution equivalence (run_jd_staged.py) — ~2 min, brief CPU training
+
+The staged (one-agent-per-job) JD path must reproduce the monolithic `run_phase`
+comparison table **exactly**. This is the acceptance gate for `run_jd_staged.py`.
+
+```bash
+SC=$(mktemp -d); PY=python3
+COMMON="--episodes 100 --eval-freq 50 --checkpoint-freq 50 --eval-episodes 200 --seed 42 --device cpu"
+# monolithic
+$PY experiments/run_simulation.py --env jump $COMMON --results-dir "$SC/mono" >/dev/null 2>&1
+# staged: one agent per job, then assemble
+for A in DQN DDQN IQN-neutral; do
+  $PY experiments/run_jd_staged.py --only-agent $A --out-dir "$SC/staged/jump_diffusion" $COMMON >/dev/null 2>&1
+done
+$PY experiments/run_jd_staged.py --assemble-eval --out-dir "$SC/staged/jump_diffusion" --device cpu >/dev/null 2>&1
+diff "$SC/mono/jump_diffusion/logs/comparison_table.txt" \
+     "$SC/staged/jump_diffusion/logs/comparison_table.txt" \
+  && echo "STAGED EQUIVALENCE: PASS (tables byte-identical)"
+```
+
+**Expected (✅):** `STAGED EQUIVALENCE: PASS`. Runs on **CPU** by design (deterministic;
+isolates staging correctness from any MPS non-determinism). The real retrain runs on
+MPS — same device for every job (train + assemble), enforced by the run manifest.
 
 ---
 
