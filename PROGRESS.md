@@ -8,16 +8,18 @@
 
 ---
 
-## Current status: JD calibration LOCKED (0.05, 0.16) → running the staged full-scale retrain
+## Current status: staged full-scale JD retrain DONE → R.4 gate FAILED → fallback (0.05, 0.12) recommended, NOT launched
 
-Scan confirmed and **locked: (λ_J=0.05, σ_J=0.16)** is now the permanent default (SimConfig + DEFAULT_SIM_CONFIG; μ_J=0). Pre-declared **fallback (0.05, 0.12)** (invoked only if the full-scale R.4 gate fails — pre-registration, not post-hoc tuning). Old degenerate JD archived (R.0) → `results/_archive_jd_stress_seed42/`; seed42 JD slot is free.
+Locked **(λ_J=0.05, σ_J=0.16)** and ran the 30k-ep JD retrain **staged** (one agent per job) via `experiments/run_jd_staged.py` — validated byte-identical to the monolithic path (equivalence smoke) and to split `--eval-agents`. **Ran on CPU, not MPS:** the MPS DQN job was reaped at ep16000/30000; CPU is ~6× faster here (DQN 164s, DDQN 183s, IQN-neutral 484s — all ≪ 34 min). Order-independent per-agent RNG reseed added to `train_agent`+`evaluate_all` makes staged ≡ monolithic and CPU deterministic.
 
-The 30k-ep JD retrain is being run **staged** (one agent per sub-34-min job) via the new `experiments/run_jd_staged.py`, which reproduces the monolithic `run_phase` table exactly (order-independent per-agent RNG reseed added to `train_agent`+`evaluate_all`; validated by an equivalence smoke).
+**R.4 gate = FAIL.** Table at `results/_seeds/seed42/jump_diffusion/logs/comparison_table.txt`; diagnostics at `logs/gate_diagnostics.json`.
+- ✅ Meaningful tail (TWAP CVaR₉₅ 12.63 ∈ [4,15]); IQN-neutral cuts tail to 3.46 (−73% vs TWAP); IQN-neutral dump 0.000; DQN/IQN/IQN-CVaR Std > 0.05; param guard 11462/5190.
+- ❌ **DDQN degenerate** — dump-at-t0 fraction 0.999 → Std IS 0.0092 < 0.05 (**triggers the FALLBACK RULE**: any learned agent Std < 0.05).
+- ❌ **No differentiation at headline α** — IQN-CVaR₀.₉₅ CVaR₉₅ (3.483) not < IQN-neutral (3.461); sign flips across eval seeds (within noise). α-sweep shows a reduction only at aggressive α=0.5 (3.35 vs neutral 3.54).
 
-### ▶ Immediate next step
-1. Train DQN → DDQN → IQN-neutral (30k eps each), then `--assemble-eval`, then rerun the JD α-sweep — RUNBOOK R.3 (staged).
-2. R.4 gate report (dump fraction, Std IS, sweep table, differentiation) incl. the FALLBACK RULE. Stop after the gate.
-3. Then Batch B (multi-seed), C (sensitivity/misspec), D (optional).
+### ▶ Immediate next step (user decision)
+1. **Per the FALLBACK RULE: recommend one rerun at the pre-declared fallback (0.05, 0.12); NOT launched.** Rerun via `run_jd_staged.py --only-agent … --jump-std 0.12 --device cpu` into a fresh archived dir. (My read: the fallback may fix DDQN's luck-of-the-draw collapse but likely NOT the weak headline differentiation, which stems from best-by-val-CVaR selecting an already-tail-aggressive IQN-neutral — see DECISION.md caveat.)
+2. Do NOT proceed to Batch B until the JD table passes non-degeneracy AND shows differentiation.
 
 ---
 
@@ -58,6 +60,11 @@ The 30k-ep JD retrain is being run **staged** (one agent per sub-34-min job) via
 - **T4** `sweep_cvar_alpha.py` — select **best-by-val-CVaR₉₅** checkpoint (not newest) + `--ckpt-dir`.
 - **T5** RUNBOOK "JD recalibration" section + `run_seeds.py --jump-intensity/--jump-std` overrides.
 
+### Staged full-scale JD retrain executed (seed 42, CPU) — R.4 gate FAILED
+- `run_jd_staged.py` (STEP 1): `--only-agent`/`--assemble-eval`/`--eval-agents`; equivalence smoke = byte-identical to monolithic + split. Order-independent RNG reseed in `train_agent`+`evaluate_all`; `--checkpoint-freq` added.
+- Trained DQN (best ep8000)/DDQN (ep13000)/IQN-neutral (ep7000), 30k eps, CPU (MPS DQN was reaped at ep16000 → archived `results/_archive_jd_partial_mps_reaped_seed42/`; CPU ~6× faster).
+- **Gate FAIL:** DDQN dump-collapse (Std 0.0092, dump 0.999) → fallback trigger; no headline-α differentiation (noise). Fallback (0.05,0.12) recommended, NOT launched.
+
 ### JD calibration scan executed (seed 42, MPS)
 - Added `--cell λ σ` / `--summarize` / `--out-root` to `scan_jump_calibration.py` so the ~1 h grid runs **one cell per short job** (the harness reaps long background jobs at ~34 min); whole-grid path unchanged. Committed.
 - Ran all 6 cells (λ∈{0.05,0.10}×σ∈{0.08,0.12,0.16}, μ=0), ~4–5 min each, all exit 0 → `results/_jump_scan/summary.{txt,csv}`.
@@ -67,9 +74,8 @@ The 30k-ep JD retrain is being run **staged** (one agent per sub-34-min job) via
 
 ## Not done / open
 
-- **Confirm the scan's recommended (λ_J=0.05, σ_J=0.16)** and lock it — pending (user).
-- **JD retrain** seed 42 with the final calibration + JD sweep rerun + new gate.
-- **Batch B / C / D** (multi-seed, sensitivity/misspec, ablations) — not started.
+- **DECISION: run the pre-declared fallback (0.05, 0.12)?** — R.4 failed at (0.05,0.16) (DDQN dump-collapse + no headline differentiation). Fallback rerun is *recommended, not launched* (per FALLBACK RULE). Awaiting user. If run and it still doesn't differentiate at α=0.90/0.95, discuss alternatives (not auto-tune) — see DECISION.md.
+- **Batch B / C / D** (multi-seed, sensitivity/misspec, ablations) — **blocked** until the JD table passes non-degeneracy AND differentiation.
 - **`PAPER_FIXES.md` number updates** after retrains (JD table, DQN/DDQN rows, abstract percentages) — WILL-CHANGE rows still placeholders. Note: **unified DQN (hidden=64) is worse than the old 128** on TAQ (CVaR₉₅ 19.7 vs 6.30) — feed to the fair-comparison narrative.
 - **`main_paper.tex`** — never edited directly; all changes catalogued in PAPER_FIXES.md.
 - **N7 (non-split-adjusted AAPL data)** — flagged, not fixed (R-6); test-window results not corrupted, but note for the final data pipeline.
