@@ -19,6 +19,7 @@ from envs.simulated_env   import AlmgrenChrissEnv, RegimeSwitchingEnv, SimConfig
 from envs.simulated_env import JumpDiffusionEnv
 # Add to imports:
 from envs.simulated_env import MeanRevertingEnv
+from envs.regime_jump_env import RegimeJumpEnv
 
 __all__ = [
     # Base
@@ -32,5 +33,6 @@ __all__ = [
     'MeanRevertingEnv',
     'JumpDiffusionEnv',
     'RegimeSwitchingEnv',
+    'RegimeJumpEnv',
     'SimConfig',
 ]
