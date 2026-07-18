@@ -130,6 +130,25 @@ Every cell MATCHES the log (IQN-CVaR₀.₉₅ CVaR₉₅ "6.13" = logged 6.1300
 
 > **Suggested placeholder convention** (in the tex, at edit time): `\textcolor{red}{[TBD-retrain: JD table pending Phase-3 rerun]}` so nothing ships with a superseded number.
 
+### 4.3 UNBLOCKED (2026-07-18) — Batches A + B1 + C complete; numbers now available
+
+Sim numbers are final (locked JD σ=0.16-cvar, seed 42 + 5-seed robustness). Sources:
+`results/_seeds/seed42/<env>/logs/comparison_table.txt`, `results/_aggregate/*_seed_summary.{txt,tex}`,
+`results/jump_sensitivity_summary.*`, `results/impact_misspec_*/matrix.*`, `results/_batch_bc_report.md`.
+
+- **`tab:sim_params` jump rows (L554–556) → λ_J = 0.05, μ_J = 0.0, σ_J = 0.16** (locked). ✅ ready to paste.
+- **`tab:jd_results` (L646–663) → the seed-42 locked table** (bps): TWAP 1.427/4.153/12.634/42.83 · DQN 1.800/0.774/**3.446**/10.72 · DDQN 2.084/0.009/**2.084**/2.55 · IQN-neutral 1.807/0.787/**3.461**/12.14 · IQN-CVaR₀.₉₀ 1.805/0.785/3.416/12.14 · IQN-CVaR₀.₉₅ 1.807/0.787/**3.483**/12.52 (Mean/Std/CVaR₉₅/Max). A **5-seed mean±std** version is in `results/_aggregate/jump_seed_summary.tex` (booktabs) for a robustness table.
+- **`tab:ac_results` DQN & DDQN rows (L596–614)** → unified-64 AC numbers; seed-42 in `results/_seeds/seed42/almgren_chriss/logs/`, 5-seed in `results/_aggregate/ac_seed_summary.tex`.
+- **`tab:taq_results` / `tab:taq_comparison` DQN·DDQN rows** → from **Batch A** (single-seed, `results/taq/AAPL_seed42/`). (TAQ single-seed by design — §2.3 note.)
+- **FIX-IN-PAPER §4.1 item 4 (fair-comparison 11,462 vs 5,190)** → now **validated**: every run is unified 64/32 (JD retrained), so the counts are true — safe to paste.
+- **New robustness appendices now supported:** 5-seed mean±std (AC+JD); jump-sensitivity λ∈{.025,.05,.10} (`jump_sensitivity_summary`); impact-misspec 3×3 (`impact_misspec_*`).
+
+> **⚠ DIRECTION CHANGED — reframe, don't just swap numbers (JD prose L667, L669):**
+> - **L669 "IQN-neutral ↓ 10.7% CVaR / 15.1% max vs DQN"** is now **false**: at the unified architecture, DQN and IQN-neutral converge to near-identical fast-trading policies (JD CVaR₉₅ 3.446 vs 3.461 — DQN marginally *better*). Rewrite: DQN ≈ IQN-neutral on JD; the IQN contribution is distributional/tail-control, not a mean/CVaR edge over DQN here.
+> - **L667 "all-RL CVaR₉₅ ↓ ≥ 47.1% vs TWAP"** → recompute: worst-CVaR RL agent is now IQN-CVaR₀.₉₅ (3.483); (12.634−3.483)/12.634 = **↓ 72.4%**.
+> - **IQN-CVaR-vs-IQN-neutral (the headline mechanism):** the effect is **small and seed-dependent** — Δ(α=0.95) = **+0.098 ± 0.226 bps, positive in 3/5 seeds** (dominated by one seed). Report honestly: the τ-truncation reduces tail *on average and at zero training cost*, but the magnitude at α=0.90/0.95 is modest and conditional on the neutral policy not already sitting at the corner. Do **not** claim a large, robust JD CVaR reduction.
+> - **DDQN** dump-collapses at 5/5 JD seeds (corner solution); frame as a finding (scalar + tail-based selection → dump), contrasted with the distributional agent which stays interior.
+
 ---
 
 ## §5 — Internal inconsistencies & notation (independent of retrains)

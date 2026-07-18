@@ -8,9 +8,15 @@
 
 ---
 
-## Current status: JD config LOCKED (σ=0.16-cvar); fallback rule amended → executing Batch B1 (sim multi-seed) + Batch C
+## Current status: Batches A + B1 + C COMPLETE (JD locked σ=0.16-cvar) → paper-number handoff
 
-**Locked final JD configuration: λ_J=0.05, σ_J=0.16, μ_J=0, cvar-selection** (user-confirmed 2026-07-17; no further calibration search). The 2×2 selection×σ diagnostic rejected the other three cells (see DECISION.md ★ section). **Fallback rule AMENDED:** DDQN's dump-collapse is σ/selection-independent → reclassified as a reported FINDING, not an env-degeneracy trigger; new env-health criteria are IQN-neutral-only (Std>0.05 AND dump<50% AND TWAP CVaR₉₅∈[4,15]) — the locked run passes all three. Now running **Batch B1** (AC+JD × seeds {123,7,2024,31}, staged CPU) + aggregation, then **Batch C** (jump sensitivity + impact misspec). Batch A done; TAQ single-seed by design.
+**Locked JD config: λ_J=0.05, σ_J=0.16, μ_J=0, cvar-selection.** Batches **A** (seed-42 headline + TAQ), **B1** (AC+JD × 5 seeds, staged CPU + aggregated), and **C** (jump sensitivity re-centred on the locked cal + impact-misspec 3×3) are all done and green. Consolidated results: `results/_batch_bc_report.md`; aggregates in `results/_aggregate/`, `results/jump_sensitivity_summary.*`, `results/impact_misspec_*/`.
+
+**Headline findings:** (1) **DDQN dump-collapses at 5/5 JD seeds** (dump-signature CVaR₉₀=CVaR₉₅; Std<0.05 at 2/5) — the reclassified scalar-vs-distributional finding, now at full seed coverage. (2) **Differentiation Δ(α=0.95) = +0.098 ± 0.226 bps, positive 3/5 seeds** — the zero-cost CVaR effect is real on average but small and seed-dependent (dominated by the one seed where IQN-neutral isn't already tail-aggressive). (3) **Jump sensitivity:** low λ → IQN under-hedges (high tail); base λ=0.05 → sweet spot (−73% vs TWAP); high λ → IQN itself dumps → locked λ is the non-degenerate regime. (4) **Impact misspec:** all agents robust, CVaR₉₅ scales smoothly ±2×; η=γ=1.0 reproduces the locked table. (5) AC is a clean Gaussian sanity check (CVaR gives no benefit). Next: hand numbers to PAPER_FIXES WILL-CHANGE rows (list below / in the final report).
+
+### ▶ Next step
+1. Populate PAPER_FIXES WILL-CHANGE rows from the aggregated tables (JD/AC/TAQ DQN·DDQN rows; jump-param rows; JD prose with the *honest* weak-differentiation framing). Do NOT edit main_paper.tex.
+2. Optional Batch D (width ablation) — nice-to-have, not blocking.
 
 <details><summary>superseded status: staged JD retrain + R.4 gate FAIL (kept for history)</summary>
 
