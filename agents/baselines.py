@@ -194,6 +194,41 @@ class TWAPAgent(BaseAgent):
 
 
 # ============================================================================
+# 1b. Immediate-Liquidation Agent
+# ============================================================================
+
+class ImmediateLiquidationAgent(BaseAgent):
+    """
+    Immediate Liquidation (IL): sell 100% of the block at t=0.
+
+    The most aggressive baseline and the opposite extreme of TWAP — it dumps the
+    entire position in the first period, eliminating all subsequent price-path
+    (and jump) exposure at the cost of the maximal one-shot temporary-impact
+    cost. Deterministic. It is the natural "corner solution" comparator: the
+    policy the CVaR-selected scalar agents (esp. DDQN) collapse to under fat
+    tails, so reporting it makes that collapse legible in the results tables.
+
+    Implementation: always select the full-liquidation action
+    (ACTION_FRACS[-1] = 1.0 of REMAINING inventory). At t=0 this sells the whole
+    block; afterwards remaining≈0 so subsequent selections are no-ops. No RNG,
+    no state — identical episodes to any other agent under the shared eval seed.
+    """
+
+    def __init__(self, env_config: EnvConfig):
+        self.cfg = env_config
+
+    def reset(self) -> None:
+        pass
+
+    def select_action(self, state: np.ndarray, eval_mode: bool = False) -> int:
+        return len(ACTION_FRACS) - 1   # full-liquidation action (fraction 1.0)
+
+    @property
+    def name(self) -> str:
+        return 'Immediate-Liquidation'
+
+
+# ============================================================================
 # 2. Almgren-Chriss Agent
 # ============================================================================
 

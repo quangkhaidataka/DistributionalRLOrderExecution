@@ -19,6 +19,7 @@
 
 ## Decision log
 
+- **2026-07-18 — Batches A/B1/C complete; Batch D dropped; Batch E added.** A (locked JD σ=0.16-cvar seed-42 + TAQ), B1 (AC+JD × 5 seeds, aggregated), and C (jump sensitivity + impact misspec) are done. **Batch D (width ablation) dropped** — not needed for the central claims; the unified 64/32 comparison is already the honest one. **Batch E** added from the post-B1/C review: E1 Immediate-Liquidation baseline, E2 DDQN jump-sensitivity rows, E3 selection-rule appendix — all cheap/CPU/eval-heavy, new dirs only.
 - **2026-07-17 — No multi-seed robustness on TAQ; the TAQ study is single-seed by design.** Seed robustness (R1) applies to the **simulation** environments only (**AC + JD**). The TAQ empirical study stays single-seed: the **seed-42 DQN/DDQN retrain from Batch A** (already done) plus the **kept IQN checkpoints** are the final TAQ numbers. *Rationale:* seed sensitivity is characterized in the controlled simulation study; the empirical study is presented as a **single-seed case study** on fixed Oct–Dec 2014 market data (which does not vary with the seed), with an explicit limitation statement in the paper. *Consequences:* Batch B is **sim-only** (the old B2 TAQ multi-seed is deleted); Batch D drops the **TAQ-IQN multi-seed** item; **Risk R-4** re-scoped from "single-seed asymmetry" to "limitation statement + viva answer"; `run_seeds.py --taq` remains in code but is **intentionally unused**; **PAPER_FIXES §4.1** gains a limitation-sentence item.
 
 ---
@@ -153,18 +154,28 @@ P1 fixes + smoke pass ─┬─► [Batch A: MUST] seed-42 headline re-runs
                        └─► [Batch D: OPTIONAL] R5 width ablation
 ```
 
-### Ordered batches (each sized to ~overnight, ~8–10 h)
-| Batch | Priority | Contents | Est. wall-clock | Depends on |
-|-------|----------|----------|-----------------|-----------|
-| **A** | **MUST** | AC(42), JD(42) full re-run + TAQ DQN/DDQN(42) retrain, then R2 CVaR sweep on all three | ~4–5 h | P1 all + smoke |
-| **B** | **SHOULD** | R1: AC & JD × seeds {123,7,2024,31} (8 sim runs); then `aggregate_seeds` — **sim only** (TAQ stays single-seed by design) | ~11 h → **one night (B1, sim)** | Batch A code paths proven |
-| **C** | **SHOULD** | R3 jump sensitivity (3 levels ×1 seed, 4 agents) + R4 impact misspec (eval-only 3×3) | ~4–6 h | P1-T3; trained agents from A/B |
-| **D** | **OPTIONAL** | R5 width ablation (AC,JD ×{64,128}) | ~2–3 h | A |
+### Ordered batches
+| Batch | Priority | Contents | Status |
+|-------|----------|----------|--------|
+| **A** | **MUST** | AC(42), JD(42) full re-run + TAQ DQN/DDQN(42) retrain, then R2 CVaR sweep | ✅ **DONE** (locked JD σ=0.16-cvar) |
+| **B1** | **SHOULD** | R1: AC & JD × seeds {123,7,2024,31} (8 sim runs, staged CPU) + `aggregate_seeds` — sim only | ✅ **DONE** (`results/_aggregate/`) |
+| **C** | **SHOULD** | R3 jump sensitivity (λ∈{.025,.05,.10}@σ=.16, 4 agents) + R4 impact misspec (eval-only 3×3, AC+JD) | ✅ **DONE** |
+| **D** | ~~OPTIONAL~~ | ~~R5 width ablation~~ | ❌ **DROPPED** (2026-07-18 — not blocking; the unified 64/32 comparison is already the honest one and DECISION.md already records DQN@64 vs 128) |
+| **E** | **SHOULD (review follow-ups)** | E1 Immediate-Liquidation baseline · E2 DDQN jump-sensitivity rows · E3 selection-rule appendix | ▶ **in progress** (see below) |
 
 ### Thesis-critical path (8-week submission)
-- **MUST (Batch A):** regenerates the three core results tables under one honest architecture + the CVaR frontier figure. Sufficient to make the paper's central claims defensible.
-- **SHOULD (Batches B, C):** mean±std robustness tables and sensitivity/misspecification appendices — expected by a thesis committee.
-- **OPTIONAL (Batch D):** DQN/DDQN width-ablation appendix — nice-to-have. (TAQ-IQN multi-seed symmetry removed: the TAQ study is single-seed by design, so there is no asymmetry to fix — see Decision log / Risk R-4.)
+- **MUST (Batch A):** ✅ regenerated the three core results tables under one honest architecture + the CVaR frontier figure.
+- **SHOULD (B1, C):** ✅ mean±std robustness tables and sensitivity/misspecification appendices.
+- **Batch E (review follow-ups):** the IL corner-solution baseline, DDQN jump-sensitivity rows, and the selection-rule robustness appendix — sharpen the honest narrative (scalar/tail-selection → corner solution; IL exposes the TAQ dump policy).
+- **Batch D dropped** — width ablation is not needed for the central claims.
+
+### Batch E — post-B1/C review follow-ups (cheap, CPU, staged short jobs)
+
+*Rationale:* the B1/C results surfaced three things worth nailing down before the paper. All are cheap and eval-heavy; new dirs only, no overwrites.
+
+- **E1 — Immediate-Liquidation (IL) baseline** (`ImmediateLiquidationAgent`, `run_il_baseline.py`): a rule-based "sell 100% at t₀" agent — the corner solution the scalar/tail-selected agents collapse to. Evaluated eval-only (10k eps, same eval seeds) in AC, JD (locked), TAQ → `results/_il_baseline/`. *Why:* makes the corner solution a legible table row. **Finding:** IL = (2.084, 2.084) in AC/JD (= DDQN's JD collapse); on **TAQ, IQN-CVaR₀.₉₅ ≡ IL exactly** (5.609/6.130/6.237) — the headline TAQ CVaR result *is* immediate liquidation.
+- **E2 — DDQN jump-sensitivity rows** (`run_jump_sensitivity.py --ddqn-level`): train DDQN at λ∈{.025,.05,.10} (σ=.16, seed 42), append as new subdirs, add its row + dump-fraction to the summary. *Why:* the base sensitivity table omitted DDQN; needed to show the scalar collapse across intensities.
+- **E3 — Selection-rule robustness appendix** (`run_selection_appendix.py`, eval-only): re-eval ALL checkpoints on a fresh 1,200-ep CRN validation set (AC+JD, 5 seeds), re-select per agent under min-val-CVaR₉₅ vs min-val-mean-IS, test-eval both → `results/_selection_appendix/` (txt + LaTeX). *Why:* tests whether conclusions (esp. DDQN's dump-collapse) are selection-artifacts. Main tables stay cvar-selected; appendix only.
 
 ---
 

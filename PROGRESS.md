@@ -8,7 +8,11 @@
 
 ---
 
-## Current status: Batches A + B1 + C COMPLETE (JD locked σ=0.16-cvar) → paper-number handoff
+## Current status: Batches A/B1/C done, D dropped → Batch E (review follow-ups) in progress
+
+**Batch E** (cheap CPU follow-ups from the B1/C review): **E1 DONE** — Immediate-Liquidation baseline (`ImmediateLiquidationAgent` + `run_il_baseline.py`) evaluated in AC/JD/TAQ → `results/_il_baseline/`. Key finding: IL=(2.084,2.084) in AC/JD (= DDQN's JD collapse); **on TAQ, IQN-CVaR₀.₉₅ ≡ IL exactly** — the headline TAQ CVaR result is a dump-at-t₀ policy. **E2** (DDQN jump-sensitivity rows) and **E3** (selection-rule appendix, eval-only) in progress. Batch D (width ablation) dropped (not blocking). See PLAN.md "Batch E" + Decision log.
+
+<details><summary>previous status: Batches A/B1/C complete — paper-number handoff (kept)</summary>
 
 **Locked JD config: λ_J=0.05, σ_J=0.16, μ_J=0, cvar-selection.** Batches **A** (seed-42 headline + TAQ), **B1** (AC+JD × 5 seeds, staged CPU + aggregated), and **C** (jump sensitivity re-centred on the locked cal + impact-misspec 3×3) are all done and green. Consolidated results: `results/_batch_bc_report.md`; aggregates in `results/_aggregate/`, `results/jump_sensitivity_summary.*`, `results/impact_misspec_*/`.
 
@@ -16,7 +20,8 @@
 
 ### ▶ Next step
 1. Populate PAPER_FIXES WILL-CHANGE rows from the aggregated tables (JD/AC/TAQ DQN·DDQN rows; jump-param rows; JD prose with the *honest* weak-differentiation framing). Do NOT edit main_paper.tex.
-2. Optional Batch D (width ablation) — nice-to-have, not blocking.
+
+</details>
 
 <details><summary>superseded status: staged JD retrain + R.4 gate FAIL (kept for history)</summary>
 
