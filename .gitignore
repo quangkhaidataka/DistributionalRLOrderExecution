@@ -16,5 +16,8 @@ results_regime_50000_10000/
 __pycache__/
 *.py[cod]
 
+# Run logs (byproducts; e.g. batch_a.log). Keep locally, don't track.
+*.log
+
 # OS / editor
 .DS_Store
