@@ -2,9 +2,11 @@
 
 > Living status doc for the DisRL thesis work. **Update this whenever meaningful progress is made** (task finished, batch run, blocker hit). Newest state at the top of each section. Dates are absolute. Companion: **DECISION.md** (why), **PLAN.md** (the plan), **RUNBOOK.md** (run commands), **VERIFY.md** (checks), **PAPER_FIXES.md** (paper audit).
 
-**Last updated:** 2026-07-17
-**Active branch:** `fix/unify-arch-jd-recalibration` (off `main`)
+**Last updated:** 2026-07-18
+**Active branch:** `fix/unify-arch-jd-recalibration` (off `main`) · **Design-v2 work on `feature/design-v2`**
 **Repo:** `/Users/user/Desktop/DisRL` · conda env `finrl_env` (py3.11, torch 2.2.2, numpy 2.4.6) · MPS available.
+
+> **Design-v2 (branch `feature/design-v2`, gov. doc `PLAN_V2.md`):** **B1 (global engine refactor) is COMPLETE and gated** (2026-07-18) — q0 action basis, single-source feasible-action masking, MaxSpeed, N-agnostic continuous TWAP/AC, σ̂ feature toggle, dynamic state_dim; new `scripts/regression_gate.py` (T1) reproduces the locked JD numbers **exactly**, `tests/test_v2_env.py`/`test_v2_smoke.py` green, legacy suite unchanged. B2–B5 (AC / regime / TAQ studies) are CODE-ONLY until the user triggers a run. The v1 locked results below are frozen at tag `locked-main-results`.
 
 ---
 
