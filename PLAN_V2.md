@@ -219,7 +219,40 @@ What shipped: `EnvConfig.action_basis|action_fracs|use_rv_feature|rv_window` (de
 
 > **GOTCHA for all v2 work — numpy-2.x NEP-50 weak promotion.** The legacy env computed `x_t = ACTION_FRACS[a] * q_t` in **float32** (float32-array element × Python float → float32). Widening to a Python float (`float(fracs[a]) * q_t`) silently upgrades the whole IS computation to float64 and shifts the locked numbers by ~1e-4 bps — the T1 gate caught it. The legacy `remaining` branch KEEPS the float32 arithmetic; only the new `q0` branch uses float64. Re-run `scripts/regression_gate.py` after ANY touch to `base_env.step()`.
 
+## B2 status — COMPLETE (code + logic tests only; 2026-07-18)
+
+Three files landed on `feature/design-v2`; all logic tests green (no full runs):
+- `experiments/run_v2_ac.py` — staged AC CLI (`--only-agent`, `--episodes a:b`,
+  `--total-episodes`, `--assemble-eval`, `--smoke`, `--force-resume`); v2 config
+  (AC, N=20, q0-grid cap 0.25, replay 100k, 40k eps/ckpt 2k); writes only under
+  `results/_v2_ac/`; refuses non-empty dirs unless `--force-resume`; config JSON
+  per job. `--assemble-eval` = 1,200-ep CRN selection (`selection_lib`) → 10k test
+  for all 11 agents (TWAP·AC·MaxSpeed·DQN·DDQN·IQN-neutral·IQN-CVaR{.3,.5,.7,.9,.95})
+  → `comparison_table.txt` (+cap-frac), `all_results.json`, `is_arrays.pkl`,
+  `alpha_ladder.{txt,tex}`.
+- `evaluation/tables_v2.py` — 3 generators (comparison+cap-frac; 5-seed aggregate
+  txt/tex reusing `aggregate_seeds`; α-ladder reusing `sweep_cvar_alpha`). Old
+  generators untouched.
+- `tests/test_v2_ac_pipeline.py` — 21 checks PASS: smoke through the CLI, table
+  format checks, and **resume-split equivalence** (`0:200`+`200:400` produces a
+  byte-identical checkpoint at ep200 AND ep400 vs a single `0:400` run).
+
+> **Resume mechanism (byte-identical `--episodes a:b`).** `run_v2_ac` persists the
+> FULL training state between segments: agent weights+optimizer+`_step`, the global
+> torch/np RNG, the whole replay buffer (arrays+ptr+size), and the env RNG
+> (`_rng.bit_generator.state`). The fresh segment (a=0) reseeds; a resumed segment
+> restores and does NOT reseed. No in-training eval (keeps the RNG stream clean for
+> resume); checkpoint selection is post-hoc via `selection_lib`. This is the
+> primitive B5 Pipeline-1 uses to split IQN into 2×20k.
+
+Tables produced later in B5: T-AC-1 (per-seed comparison), T-AC-2 (5-seed aggregate),
+T-AC-3 (α-ladder, expect FLAT — Gaussian sanity).
+
 ## Decision log
+- 2026-07-18: **B2 done** (see status block above). Deviations from the file table,
+  all minor: added `--total-episodes` (needed to mark a segment as non-final for the
+  resume save); assemble-eval selection uses `selection_lib` (1,200 CRN) not the
+  in-training eval_history; α-ladder ladder includes α=1.0 as the neutral reference.
 - 2026-07-18: **B1 done** (see status block above). T1 gate proved byte-identical legacy behaviour after fixing a float32→float64 NEP-50 precision regression in `step()`. Masking is single-source (`feasible_action_mask` shared by env + both agent families, verified by T3). Deviations from the file table, all minor: `simulated_env.py` needed no edit (SimConfig inherits the new fields via dataclass inheritance); trainer resume implemented as module-level `save/load_resumable_state` helpers (the Trainer class is not on the pipeline hot path — `run_simulation.train_agent` is); MaxSpeed at cap 0.25/N=20 liquidates in 4 periods then the env terminates on `q≈0` (no trailing zeros).
 - 2026-07-18: doc v3 — file-by-file coding tables added per user request (B1: 14 files, B2: 3, B3: 5, B4: 5). Reuse identified: `sweep_cvar_alpha.py` (α-ladder core), `run_selection_appendix.py` (CRN selection core → extract `selection_lib.py`), `scan_jump_calibration.py` (scan pattern), `run_jd_staged.py` (staged CLI + resume pattern).
 - 2026-07-18: keep network 2×64 (no capacity increase); d=128 only as symptom-gated pilot escalation; watch-items C=500 semantics and ε-decay semantics at N=20.
