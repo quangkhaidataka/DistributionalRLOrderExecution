@@ -56,12 +56,31 @@ def _scaled_cfg(eta_scale, gamma_scale):
     return SimConfig(**d)
 
 
+def _best_ep_from_log(ckpt_dir, name):
+    """Best-by-val-CVaR95 epoch from ../logs/<name>_training.json (matches the
+    locked table's checkpoint selection). None if no usable log."""
+    log_p = ckpt_dir.parent / 'logs' / f'{name}_training.json'
+    if not log_p.exists():
+        return None
+    hist = json.load(open(log_p)).get('eval_history', [])
+    if not hist:
+        return None
+    return min(hist, key=lambda x: x.get('CVaR_0.95_bps', float('inf')))['episode']
+
+
 def _load_ckpt(agent, name, ckpt_dir):
+    # (1) explicit *_best.pt if present; (2) best-by-val-CVaR95 from the training
+    # log (what the locked table uses); (3) numerically-latest ep checkpoint.
     best = ckpt_dir / f'{name}_best.pt'
     if best.exists():
         agent.load(str(best))
         return True
-    eps = sorted(glob.glob(str(ckpt_dir / f'{name}_ep*.pt')))
+    ep = _best_ep_from_log(ckpt_dir, name)
+    if ep is not None and (ckpt_dir / f'{name}_ep{ep}.pt').exists():
+        agent.load(str(ckpt_dir / f'{name}_ep{ep}.pt'))
+        return True
+    eps = sorted(glob.glob(str(ckpt_dir / f'{name}_ep*.pt')),
+                 key=lambda s: int(s.split('_ep')[-1].split('.pt')[0]))
     if eps:
         agent.load(eps[-1])
         return True
