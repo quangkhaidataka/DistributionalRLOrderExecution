@@ -59,32 +59,48 @@ Verdict legend: **MATCH** · **FIX-IN-PAPER** (paper wrong, results stay) · **W
 
 ## §2 — Results tables (all currently reproduce `results/*/logs/` exactly)
 
-### 2.1 `tab:ac_results` (caption L612, body L596–614) — source `results/almgren_chriss/logs/`
-Every cell **MATCHES** the log verbatim (e.g. IQN-neutral Std "0.15" = logged 0.1500; IQN-CVaR₀.₉₅ CVaR₉₀ "1.865" = 1.8650). Retrain impact under D1 (DQN/DDQN 128→64; IQN already 64/32):
+### 2.1 `tab:ac_results` (caption L612, body L596–614) — source `results/_seeds/seed42/almgren_chriss/logs/`
+**UPDATED with the final unified re-run (seed 42, 2026-07-18).** All rows are superseded by the Batch-A/B1 re-run: DQN/DDQN moved to hidden 64, and every learned agent's training now uses the order-independent per-agent RNG discipline, so the numbers shift slightly from the original table. Rule-based TWAP/AC are essentially unchanged. **New seed-42 values (bps): Mean / Std / CVaR₉₀ / CVaR₉₅ / Max —**
 
-| Rows | Verdict |
-|---|---|
-| TWAP, AC | MATCH — rule-based, unchanged by architecture; stable across the seed-42 re-run |
-| IQN-neutral, IQN-CVaR₀.₉₀/₀.₉₅ | MATCH — already at unified 64/32; seed-42 re-run reproduces (re-verify) |
-| **DQN, DDQN** | **WILL-CHANGE** — retrained at hidden 64 (18,566→5,190 params) |
+| Agent | Mean | Std | CVaR₉₀ | CVaR₉₅ | Max |
+|---|---|---|---|---|---|
+| TWAP | 1.4219 | 0.3711 | 2.0800 | 2.1954 | 2.6908 |
+| AC | 1.4218 | 0.3665 | 2.0719 | 2.1850 | 2.6555 |
+| DQN | 1.6075 | 0.1451 | 1.8637 | 1.9058 | 2.1070 |
+| DDQN | 1.6071 | 0.1515 | 1.8699 | 1.9159 | 2.2393 |
+| IQN-neutral | 1.5014 | 0.2233 | 1.8928 | 1.9606 | 2.3942 |
+| IQN-CVaR₀.₉₀ | 1.5029 | 0.2241 | 1.8983 | 1.9632 | 2.2621 |
+| IQN-CVaR₀.₉₅ | 1.5028 | 0.2230 | 1.8934 | 1.9606 | 2.3455 |
 
-### 2.2 `tab:jd_results` (caption L661, body L646–663) — source `results/jump_diffusion/logs/`
-Every cell MATCHES the log. **All rows WILL-CHANGE** because both inputs change: (a) JD env recalibration (F1/D3 — the current numbers reflect the buggy ≈18-jumps/episode drift env; note TWAP mean IS 2.9080 bps is inflated by the ≈−3.6 bps/episode drift), and (b) architecture unification (IQN 128/64→64/32; DQN/DDQN 128→64). Also note the current "best val CVaR₉₅" selection produced oddly early checkpoints (IQN ep9000, DDQN ep3000, DQN ep18000) — expected under the drift env; will shift after the fix.
+Gaussian sanity check: agents ≈ equal, CVaR gives no benefit (IQN-CVaR₀.₉₅ CVaR₉₅ 1.9606 = IQN-neutral 1.9606). 5-seed mean±std booktabs: `results/_aggregate/ac_seed_summary.tex`.
 
-| Rows | Verdict |
-|---|---|
-| TWAP, AC, DQN, DDQN, IQN-neutral, IQN-CVaR₀.₉₀/₀.₉₅ | **WILL-CHANGE** (env recalibration + arch unification) |
+### 2.2 `tab:jd_results` (caption L661, body L646–663) — source `results/_seeds/seed42/jump_diffusion/logs/`
+**UPDATED — all rows replaced (locked JD σ=0.16-cvar, seed 42, 2026-07-18).** Both inputs changed: JD env recalibrated to the symmetric locked calibration (λ_J=0.05, μ_J=0, σ_J=0.16 — supersedes the old buggy ≈18-jumps/ep drift env) and architecture unified (all agents 64/32 · DQN/DDQN 5,190 · IQN 11,462). **New seed-42 values (bps): Mean / Std / CVaR₉₀ / CVaR₉₅ / Max —**
+
+| Agent | Mean | Std | CVaR₉₀ | CVaR₉₅ | Max |
+|---|---|---|---|---|---|
+| TWAP | 1.4273 | 4.1532 | 7.9776 | 12.6338 | 42.8291 |
+| AC | 1.4297 | 4.1078 | 7.7783 | 12.4734 | 42.7915 |
+| DQN | 1.7999 | 0.7735 | 2.7057 | 3.4458 | 10.7236 |
+| DDQN | 2.0840 | 0.0092 | 2.0841 | 2.0841 | 2.5461 |
+| IQN-neutral | 1.8065 | 0.7865 | 2.6998 | 3.4605 | 12.1433 |
+| IQN-CVaR₀.₉₀ | 1.8052 | 0.7847 | 2.6774 | 3.4158 | 12.1433 |
+| IQN-CVaR₀.₉₅ | 1.8069 | 0.7866 | 2.7115 | 3.4833 | 12.5177 |
+
+Notes: **DDQN dump-collapses** (Std 0.009, CVaR₉₀=CVaR₉₅=2.084 — corner solution; 5/5 seeds). **DQN ≈ IQN-neutral** (CVaR₉₅ 3.446 vs 3.461). **IQN-CVaR₀.₉₅ Δ vs neutral is small/seed-dependent** (+0.098±0.226 bps over 5 seeds) — see §3 / §4.3 for the honest framing. 5-seed mean±std booktabs: `results/_aggregate/jump_seed_summary.tex`.
 
 ### 2.3 `tab:taq_results` (caption L814, body L798–816) & `tab:taq_comparison` (caption L838, body L827–840) — source `results/taq/AAPL/summary.json`
 Every cell MATCHES the log (IQN-CVaR₀.₉₅ CVaR₉₅ "6.13" = logged 6.130010; Max " 6.2367" = 6.236699). Under **D2 (keep TAQ IQN checkpoints; retrain only DQN/DDQN)**:
 
 | Rows | Verdict |
 |---|---|
-| TWAP, AC | MATCH — rule-based, kept |
-| IQN-neutral, IQN-CVaR₀.₉₀/₀.₉₅ | MATCH — kept checkpoints, unchanged |
-| **DQN, DDQN** (both tables) | **WILL-CHANGE** — retrained at hidden 64 |
+| TWAP, AC | MATCH — rule-based, kept (TWAP 1.5917/22.157/42.324/54.893/207.758) |
+| IQN-neutral, IQN-CVaR₀.₉₀/₀.₉₅ | MATCH — kept checkpoints (IQN-CVaR₀.₉₅ 5.6086/0.2715/6.0854/**6.1300**/**6.2367**) |
+| **DQN, DDQN** (both tables) | **UPDATED (seed-42, unified 64):** DQN 3.7634/6.5495/15.069/**19.675**/147.104 · DDQN 5.6082/0.5998/6.208/**6.377**/37.990 (Mean/Std/CVaR₉₀/CVaR₉₅/Max, bps) |
 | `tab:taq_comparison` row 3 (IQN-neutral / IQN-CVaR) | MATCH — both kept |
-| `tab:taq_comparison` rows 1–2 (DQN, DDQN / IQN-CVaR) | **WILL-CHANGE** — numerator retrained |
+| `tab:taq_comparison` rows 1–2 (DQN, DDQN / IQN-CVaR) | **UPDATED** — numerator retrained (see multipliers in §3) |
+
+> **⚠ DQN degraded at unified width (L823 claim breaks):** DQN@64 on TAQ is markedly worse than the old hidden-128 run — **CVaR₉₅ 19.675 bps, Max 147.1 bps**. So the prose "all RL methods keep CVaR₉₅ < 7 bps" (L823) is now **false** (DQN 19.675 ≫ 7). Reframe: DDQN and IQN stay ≈6 bps, but the scalar DQN does not at the honest unified width. The TWAP-relative IQN-CVaR headlines (88.8% / 97.0%) are unaffected (TWAP + IQN-CVaR both kept).
 
 > **Single-seed by design (scope decision 2026-07-17):** the entire TAQ study is reported for **seed 42 only** — DQN/DDQN from the Batch-A retrain, IQN kept. There is **no TAQ mean±std / multi-seed table** and none is promised anywhere in this file; seed robustness is characterized in the **simulation** study (AC + JD multi-seed). Add the explicit limitation sentence — see §4.1 item 7. (See PLAN.md Decision log / Risk R-4.)
 
@@ -96,14 +112,14 @@ Every cell MATCHES the log (IQN-CVaR₀.₉₅ CVaR₉₅ "6.13" = logged 6.1300
 |---|---|---|---|
 | Abstract: CVaR₉₅ ↓ **88.8%** vs TWAP (TAQ) — L66 | 88.8% | (54.89329−6.130010)/54.89329 = **88.83%** ✓ | **MATCH & STABLE** (TWAP + IQN-CVaR both kept, D2) |
 | Abstract: worst-case ↓ **97.0%** vs TWAP (TAQ) — L66 | 97.0% | (207.75745−6.236699)/207.75745 = **97.00%** ✓ | **MATCH & STABLE** |
-| Abstract/contrib: max shortfall ↓ **5.2×** vs DQN, **7.3×** vs DDQN (TAQ) — L67, L103 | 5.2× / 7.3× | 32.2486/6.2367=5.17×; 45.2367/6.2367=7.25× ✓ | **WILL-CHANGE** (DQN/DDQN retrained) |
-| AC prose: IQN-CVaR ↓ **13.1%** tail, **21.7%** worst-case vs TWAP — L621–624 | 13.1% / 21.7% | (2.1956−1.9082)/2.1956=13.09%; (2.6910−2.1071)/2.6910=21.70% ✓ | MATCH (depends only on TWAP+IQN-CVaR; re-verify after AC re-run) |
-| JD prose: IQN-neutral ↓ **10.7%** CVaR, **15.1%** max vs DQN — L669 | 10.7% / 15.1% | (2.7977−2.4957)/2.7977=**10.79%**; (3.5744−3.0259)/3.5744=**15.35%** | **FIX + WILL-CHANGE** — see §5.1 (paper's own numbers round to 10.8%/15.3%, not 10.7%/15.1%); moot after JD retrain but the arithmetic slip should be logged |
-| JD prose: DDQN max **49.5%** higher than IQN-neutral — L669 | 49.5% | (4.5275−3.0259)/3.0259=**49.62%** | FIX (→49.6%) + WILL-CHANGE |
-| JD prose: all-RL CVaR₉₅ ↓ ≥ **47.1%** vs TWAP — L667 | 47.1% | (5.6719−2.9953)/5.6719=47.19% ✓ | WILL-CHANGE |
-| TAQ prose: all-RL CVaR₉₅ < 7 bps, ↓ ≥ **87.3%** vs TWAP — L823 | 87.3% | (54.8933−6.9884)/54.8933=87.27% ✓ | WILL-CHANGE (worst-RL is DDQN, retrained) |
-| TAQ prose: max shortfall 41.39→6.24, **84.9%** ↓ (IQN-neutral→CVaR) — L844 | 84.9% | (41.3920−6.2367)/41.3920=84.93% ✓ | MATCH & STABLE (both IQN, kept) |
-| TAQ prose: vol ↓ **3.93×** vs IQN-neutral, **5.36×** vs DDQN — L842 | 3.93× / 5.36× | 1.0666/0.2715=3.93×; 1.4546/0.2715=5.36× ✓ | 3.93× MATCH (kept); 5.36× WILL-CHANGE (DDQN) |
+| Abstract/contrib: max shortfall ↓ **5.2×** vs DQN, **7.3×** vs DDQN (TAQ) — L67, L103 | 5.2× / 7.3× | **UPDATED (unified 64):** 147.104/6.2367=**23.6×** vs DQN; 37.990/6.2367=**6.1×** vs DDQN | new numbers ready (DQN much worse at 64) |
+| AC prose: IQN-CVaR ↓ **13.1%** tail, **21.7%** worst-case vs TWAP — L621–624 | 13.1% / 21.7% | **UPDATED (seed-42 re-run):** (2.1954−1.9606)/2.1954 = **↓ 10.7%** tail; (2.6908−2.3455)/2.6908 = **↓ 12.8%** worst-case | new numbers ready (both shifted under the unified re-run) |
+| JD prose: IQN-neutral ↓ **10.7%** CVaR, **15.1%** max vs DQN — L669 | 10.7% / 15.1% | **DIRECTION FLIPPED (unified/locked JD):** IQN-neutral CVaR₉₅ 3.4605 vs DQN 3.4458 → IQN-neutral **+0.4% (worse)**; Max 12.14 vs 10.72 → **+13% (worse)** | **REMOVE/REFRAME** — DQN ≈ IQN-neutral on JD; the claim no longer holds (§4.3) |
+| JD prose: DDQN max **49.5%** higher than IQN-neutral — L669 | 49.5% | **FLIPPED:** DDQN Max 2.546 vs IQN-neutral 12.143 → DDQN is now **79% lower** (DDQN dumps at t₀) | **REMOVE/REFRAME** — DDQN collapse gives it a low max (§4.3) |
+| JD prose: all-RL CVaR₉₅ ↓ ≥ **47.1%** vs TWAP — L667 | 47.1% | **UPDATED:** worst-RL is IQN-CVaR₀.₉₅ 3.4833; (12.6338−3.4833)/12.6338 = **↓ 72.4%** | new number ready |
+| TAQ prose: all-RL CVaR₉₅ < 7 bps, ↓ ≥ **87.3%** vs TWAP — L823 | 87.3% | **BREAKS at unified 64:** DQN CVaR₉₅ = **19.675 ≫ 7**; worst-RL (DQN) is only (54.8933−19.675)/54.8933 = **↓ 64.2%** | **REFRAME** — DDQN & IQN stay <7 bps; scalar DQN does not (§2.3) |
+| TAQ prose: max shortfall 41.39→6.24, **84.9%** ↓ (IQN-neutral→CVaR) — L844 | 84.9% | **UPDATED (re-eval):** IQN-neutral Max 40.838 → IQN-CVaR 6.2367 = **↓ 84.7%** (was 84.9%; IQN-neutral eval shifted slightly) | new number ready |
+| TAQ prose: vol ↓ **3.93×** vs IQN-neutral, **5.36×** vs DDQN — L842 | 3.93× / 5.36× | **UPDATED:** IQN-neutral Std 0.8941/0.2715 = **3.29×**; DDQN Std 0.5998/0.2715 = **2.21×** (both re-eval at unified 64) | new numbers ready |
 | TAQ prose: pays **4.02** bps more, eliminates **48.76** bps tail vs TWAP — L846 | 4.02 / 48.76 | 5.6086−1.5917=4.02; 54.8933−6.13=48.76 ✓ | MATCH & STABLE |
 | Commented abstract (L76–80): 55.8% / 64.5% (JD), 10.8% / 15.3% (JD), 81× vol (TAQ) | — | JD figures match logs; not compiled | **WILL-CHANGE** + see §5.2 (dead duplicate abstract) |
 
@@ -120,7 +136,7 @@ Every cell MATCHES the log (IQN-CVaR₀.₉₅ CVaR₉₅ "6.13" = logged 6.1300
 6. **Notation collisions (§5.3).**
 7. **Empirical-study limitation sentence (single-seed case study).** Near the start of the AAPL empirical study (around `tab:taq_results` / `tab:taq_comparison`, **L798–840** — e.g. in the study's setup paragraph or the table notes), insert a sentence such as: *"All empirical results are reported for a single training seed (seed 42); seed-level robustness of the learned policies is characterized in the simulation study (Table~\ref{tab:jd_results} and the multi-seed AC/JD tables). The evaluation window (Oct–Dec 2014) is fixed market data and does not vary with the training seed."* Makes the single-seed scope explicit (scope decision 2026-07-17; PLAN.md Decision log / Risk R-4). **Results-independent — safe to add now.**
 
-### 4.2 WILL-CHANGE-AFTER-RETRAIN (insert a placeholder note, NOT a number, until Phase 3 completes)
+### 4.2 WILL-CHANGE-AFTER-RETRAIN — ✅ RESOLVED for sim (2026-07-18): actual numbers now filled in §2.1 (AC), §2.2 (JD), §2.3 (TAQ DQN/DDQN), §3 (percentages/multipliers), and summarized in §4.3. The list below is retained for provenance.
 - **`tab:jd_results` (L646–663):** every row — JD env recalibration + arch unification.
 - **`tab:sim_params` jump rows (L554–556):** $\lambda_J, \mu_J, \sigma_J$ → recalibrated values.
 - **`tab:ac_results` DQN & DDQN rows (L596–614):** arch 128→64.
