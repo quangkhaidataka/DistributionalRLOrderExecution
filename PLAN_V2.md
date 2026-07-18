@@ -219,6 +219,40 @@ What shipped: `EnvConfig.action_basis|action_fracs|use_rv_feature|rv_window` (de
 
 > **GOTCHA for all v2 work — numpy-2.x NEP-50 weak promotion.** The legacy env computed `x_t = ACTION_FRACS[a] * q_t` in **float32** (float32-array element × Python float → float32). Widening to a Python float (`float(fracs[a]) * q_t`) silently upgrades the whole IS computation to float64 and shifts the locked numbers by ~1e-4 bps — the T1 gate caught it. The legacy `remaining` branch KEEPS the float32 arithmetic; only the new `q0` branch uses float64. Re-run `scripts/regression_gate.py` after ANY touch to `base_env.step()`.
 
+## B3 status — COMPLETE (code + logic tests only; 2026-07-18)
+
+Five items landed on `feature/design-v2`; env validated statistically, runners
+smoke-tested (NO full runs — the 2×2 scan itself is B5):
+- `envs/regime_jump_env.py` — `RegimeJumpEnv(AlmgrenChrissEnv)`: hidden 2-state
+  Markov vol (σ_low=0.0005 & p₁₀=0.40 FIXED class constants; σ_high & p₀₁ from
+  config), compound-Poisson jumps ONLY in stress (λ_J=0.1/period, σ_J=0.16, μ_J=0),
+  spread ×3 in stress. Per-step info: `regime, stress, n_jumps, spread, stress_hit`.
+  Existing env classes untouched. Works with `use_rv_feature` on/off.
+- `experiments/run_v2_regime_scan.py` — 2×2 pilot scan σ_high∈{0.002,0.004}×
+  p₀₁∈{0.05,0.10}, seed 42, agents TWAP+DDQN+IQN-neutral; hard criteria
+  (a) TWAP CVaR₉₅∈[8,20], (b) Std IS>0.05 all learned, (c) IQN-neutral cap-sat
+  <50%, (d) soft neutral−CVaR gap monotone in α → `results/_v2_regime/_scan/
+  scan_summary.{txt,csv}` + recommended cell. STOPS (user locks the cell).
+- `experiments/run_v2_regime.py` — full staged CLI (reuses run_v2_ac's train
+  machinery); reads the LOCKED cell from `results/_v2_regime/locked_cell.json`
+  (errors clearly if missing); assemble-eval adds the T-RG-3 regime breakdown +
+  action-vs-spread heatmap + α-ladder.
+- `evaluation/tables_v2.py` (extended) — `regime_breakdown_table` /
+  `write_regime_breakdown` / `regime_breakdown_latex` (stress-hit vs calm ×
+  {Mean, CVaR₉₅}) + `action_spread_heatmap` (csv+png). B2 API untouched.
+- `tests/test_v2_regime_env.py` — 10k no-trade episodes/cell: stress_frac ≈ π
+  (Δ<0.003), zero calm jumps, jump rate 0.098–0.099 ≈ 0.10, spread ratio 3.00;
+  + 200-ep masked smoke per learned agent.
+
+> **stress_hit semantics.** `_evolve_price` transitions the regime BEFORE the
+> first price move, so the initial regime R₀ only seeds the chain (and sets the
+> initial spread) — it never drives price/jumps. `stress_hit` therefore counts
+> only the N price-evolution regimes R₁…R_N (matches per-step `info['stress']`),
+> which is the right conditioning variable for the IS-tail breakdown.
+
+Tables produced later in B5: T-RG-0 (scan), T-RG-1 (main), **T-RG-2 (α-ladder —
+thesis headline)**, T-RG-3 (stress vs calm), T-RG-4 (5-seed aggregate).
+
 ## B2 status — COMPLETE (code + logic tests only; 2026-07-18)
 
 Three files landed on `feature/design-v2`; all logic tests green (no full runs):
