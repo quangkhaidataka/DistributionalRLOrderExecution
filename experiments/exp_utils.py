@@ -51,3 +51,35 @@ def refuse_if_nonempty(path) -> Path:
             f'  Archive it first (mv it into results/_archive_<date>/) — see '
             f'PLAN.md R-2 / RUNBOOK.md.')
     return path
+
+
+def prepare_v2_output_dir(path, config=None, *, force_resume: bool = False,
+                          subdirs=('checkpoints', 'logs'),
+                          config_name: str = 'config.json') -> Path:
+    """Set up a Design-v2 output dir under a single guarded entry point.
+
+    Design-v2 runners write ONLY under ``results/_v2_*/`` and must REFUSE to
+    write into a non-empty dir unless ``--force-resume`` is passed (PLAN_V2.md
+    standing rules). This helper enforces that, creates the standard subdirs,
+    and dumps the run config JSON (reusing ``dump_config_json``).
+
+    Args:
+        path         : the run output directory (created if absent).
+        config       : dataclass/dict run config to persist (skipped if None).
+        force_resume : if True, allow writing into an existing non-empty dir
+                       (the resumable staged-run path); otherwise guard it.
+        subdirs      : subdirectories to create under ``path``.
+        config_name  : filename for the dumped config (under ``path``).
+
+    Returns:
+        The prepared Path.
+    """
+    path = Path(path)
+    if not force_resume:
+        refuse_if_nonempty(path)
+    path.mkdir(parents=True, exist_ok=True)
+    for sd in subdirs:
+        (path / sd).mkdir(parents=True, exist_ok=True)
+    if config is not None:
+        dump_config_json(config, path / config_name)
+    return path

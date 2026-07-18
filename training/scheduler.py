@@ -59,11 +59,33 @@ from typing import Literal
 
 @dataclass
 class EpsilonConfig:
-    """Configuration for epsilon-greedy exploration schedule."""
+    """Configuration for epsilon-greedy exploration schedule.
+
+    ── ε-decay SEMANTICS (Design-v2 B1 — read before changing N) ──────────
+    `decay_steps` is measured in UPDATE-STEPS (i.e. environment steps that
+    trigger a gradient update), NOT in episodes. This mirrors the learned
+    agents' built-in decay in agents/iqn_agents.py and agents/baselines.py,
+    which decay ε via `self._step / cfg.epsilon_decay_steps`, where `_step`
+    increments once per gradient update (one per environment step once the
+    replay buffer is warm).
+
+    Why this matters for the horizon N: an episode has ~N update-steps, so
+    the episodes-equivalent decay length is `decay_steps / N`. At N=20 there
+    are ~20 steps/episode, so a `decay_steps` of, say, 50_000 corresponds to
+    ~2_500 episodes of exploration. Keeping `unit='step'` preserves the OLD
+    (canonical) per-update-step exploration meaning when N changes — do NOT
+    reinterpret `decay_steps` as episodes.
+    """
     strategy    : str   = 'linear'     # 'linear', 'exponential', 'cosine'
     start       : float = 1.0          # initial ε
     end         : float = 0.01         # final ε (floor)
-    decay_steps : int   = 10_000       # steps over which to decay
+    decay_steps : int   = 10_000       # decay length, in UPDATE-STEPS (see above)
+    # unit: 'step' = decay per update-step (env step) — the canonical/preserved
+    # semantics used by the learned agents. Exposed here so the per-step (vs
+    # per-episode) meaning is explicit in config. 'step' is the ONLY value the
+    # decay math below honours; it is recorded for clarity, not branched on, so
+    # the default preserves the existing behaviour exactly.
+    unit        : str   = 'step'
 
 
 class EpsilonScheduler:
@@ -94,6 +116,10 @@ class EpsilonScheduler:
         - Flexibility: change schedule without modifying agent code
         - Consistency: same scheduler object used across all agents
         - Logging: Trainer can log ε at each step for diagnostics
+
+    Units: `value(step)` takes an UPDATE-STEP index (see EpsilonConfig), the
+    same clock the agents' built-in ε-decay uses. `cfg.unit` documents this
+    ('step'); the math is unchanged, so N=20 keeps the old per-step meaning.
     """
 
     def __init__(self, cfg: EpsilonConfig = None, **kwargs):
@@ -151,7 +177,10 @@ class LRConfig:
     min_lr      : float = 1e-6           # floor LR (for cosine/step)
     warmup_steps: int   = 0              # linear warmup period
     total_steps : int   = 100_000        # total training steps
-    step_size   : int   = 30_000         # for step_decay: decay every N steps
+    # step_size: heuristic ESTIMATE (in update-steps) for the step_decay LR
+    # schedule only — it is NOT an episode budget and does not gate training
+    # length. Used solely to place the staircase LR decays; leave as-is.
+    step_size   : int   = 30_000         # for step_decay: decay every N update-steps
     step_gamma  : float = 0.5            # for step_decay: multiply LR by this
 
 

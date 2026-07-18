@@ -68,6 +68,7 @@ import torch.optim as optim
 
 from networks.iqn_networks import IQNNetwork, NetworkConfig
 from training.replay_buffer import ReplayBuffer, ReplayConfig
+from envs.base_env import feasible_action_mask, ACTION_FRACS
 
 
 # ---------------------------------------------------------------------------
@@ -159,17 +160,31 @@ class IQNAgent:
 
     def __init__(
         self,
-        cfg       : AgentConfig,
-        state_dim : int,
-        n_actions : int,
-        device    : Optional[torch.device] = None,
-        seed      : int = 42,
+        cfg          : AgentConfig,
+        state_dim    : int,
+        n_actions    : int,
+        device       : Optional[torch.device] = None,
+        seed         : int = 42,
+        action_fracs : Optional[np.ndarray] = None,
+        action_basis : str = 'remaining',
     ):
         self.cfg       = cfg
         self.state_dim = state_dim
         self.n_actions = n_actions
         self.device    = device or self._auto_device()
         self._step     = 0       # global step counter
+
+        # ── Feasible-action masking (Design-v2 B1) ────────────────────
+        # Defaults (basis='remaining') reproduce the legacy no-mask behaviour
+        # byte-for-byte. In 'q0' mode the agent masks ε-greedy sampling, greedy
+        # argmax, AND the Bellman target-max through the SAME env-shared
+        # feasible_action_mask function (single source of truth). The grid must
+        # match the env's grid (the v2 runner passes env.action_fracs).
+        self.action_basis  = action_basis
+        self.action_fracs  = np.asarray(
+            action_fracs if action_fracs is not None else ACTION_FRACS,
+            dtype=np.float64)
+        self._use_masking  = (action_basis == 'q0')
 
         # Reproducibility
         torch.manual_seed(seed)
@@ -238,19 +253,32 @@ class IQNAgent:
         """
         epsilon = self._get_epsilon() if not eval_mode else 0.0
 
-        if np.random.random() < epsilon:
-            return np.random.randint(0, self.n_actions)
+        if not self._use_masking:
+            # ── Legacy path (basis='remaining'): byte-identical RNG usage ──
+            if np.random.random() < epsilon:
+                return np.random.randint(0, self.n_actions)
+            with torch.no_grad():
+                state_t = torch.FloatTensor(state).to(self.device)
+                q_values = self.online_net.get_action_values(
+                    state=state_t, n_tau=self.cfg.n_tau_policy,
+                    tau_low=0.0, tau_high=self.cfg.cvar_alpha,
+                )
+            return int(q_values.argmax(dim=-1).item())
 
-        # Greedy: use CVaR_alpha range for action selection
+        # ── Masked path ('q0' basis) ──────────────────────────────────
+        mask = feasible_action_mask(state[1], self.action_fracs, self.action_basis)
+        feasible = np.flatnonzero(mask)
+        if np.random.random() < epsilon:
+            return int(np.random.choice(feasible))   # explore feasible only
         with torch.no_grad():
             state_t = torch.FloatTensor(state).to(self.device)
             q_values = self.online_net.get_action_values(
-                state=state_t,
-                n_tau=self.cfg.n_tau_policy,
-                tau_low=0.0,
-                tau_high=self.cfg.cvar_alpha,
-            )
-        return int(q_values.argmax(dim=-1).item())
+                state=state_t, n_tau=self.cfg.n_tau_policy,
+                tau_low=0.0, tau_high=self.cfg.cvar_alpha,
+            ).squeeze(0)                                  # (A,)
+        q_np = np.asarray(q_values.detach().cpu().tolist(), dtype=np.float64)
+        q_np[~mask] = -np.inf                             # forbid infeasible
+        return int(np.argmax(q_np))
 
     # ------------------------------------------------------------------
     # Experience storage
@@ -266,6 +294,26 @@ class IQNAgent:
     ) -> None:
         """Store transition in replay buffer."""
         self.replay.push(state, action, reward, next_state, done)
+
+    # ------------------------------------------------------------------
+    # Masking helper
+    # ------------------------------------------------------------------
+
+    def _mask_bias(self, states: torch.Tensor) -> torch.Tensor:
+        """Additive Q-bias (0 for feasible, -inf for infeasible) for a batch.
+
+        Reads q* = states[:, 1] and delegates to feasible_action_mask so the
+        Bellman target-max forbids exactly the same actions the policy forbids.
+        Only called when self._use_masking (q0 basis).
+        """
+        # NOTE: tensor.numpy() is broken under numpy-2.x + torch-2.2.2 (see
+        # CLAUDE.md) — use .tolist() for the tensor→python hop, and build the
+        # bias tensor with torch.tensor (not torch.from_numpy) to avoid the
+        # numpy bridge in both directions.
+        q_norm = np.asarray(states[:, 1].detach().cpu().tolist(), dtype=np.float64)
+        mask   = feasible_action_mask(q_norm, self.action_fracs, self.action_basis)
+        bias   = np.where(mask, 0.0, -np.inf).astype(np.float32)   # (B, A)
+        return torch.tensor(bias.tolist(), dtype=torch.float32, device=states.device)
 
     # ------------------------------------------------------------------
     # Learning update
@@ -356,6 +404,10 @@ class IQNAgent:
                 tau_low  = 0.0,
                 tau_high = 1.0,
             )                              # (B, A) — mean over τ''
+            # Mask the target-max over INFEASIBLE next-state actions (same
+            # feasible_action_mask as selection → the single-source invariant).
+            if self._use_masking:
+                q_next_online = q_next_online + self._mask_bias(next_states)
             a_star = q_next_online.argmax(dim=1)  # (B,)
 
             # 4b. Evaluate a* with target network

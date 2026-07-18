@@ -72,6 +72,132 @@ from training.scheduler import (
 
 
 # ============================================================================
+# Resumable-state primitive (Design-v2 B1)
+# ============================================================================
+#
+# These two module-level helpers are the primitive the Design-v2 staged
+# runners (B2) use to make a split `--episodes 0:b` followed by `b:c` run
+# reproduce a single `0:c` run. Equivalence requires restoring, at the split
+# boundary, everything that steers the stochastic trajectory:
+#
+#   1. the agent's learned parameters + optimizer state (online/target nets),
+#   2. the agent's `_step` counter (drives ε-decay AND target-net updates),
+#   3. the GLOBAL RNG state (torch + numpy, and torch.cuda if present) — the
+#      ε-greedy coin flips, τ sampling, replay sampling, and env noise all
+#      draw from these generators.
+#
+# Everything is bundled into ONE file via `torch.save`.
+#
+# LIMITATION — the replay BUFFER is intentionally NOT persisted here. It can be
+# large and is not needed for the staged v2 split, where each job either trains
+# one agent fully or resumes from this state with a freshly warmed buffer.
+# Because the warm buffer's contents differ from an uninterrupted run's buffer,
+# resumed updates are only *equivalent-in-distribution* (same RNG streams, same
+# weights, same step clock), not byte-identical, until the buffer re-fills.
+# torch.save / torch.get_rng_state / torch.set_rng_state do NOT touch the
+# numpy↔torch bridge, so they are safe under this repo's numpy-2.x + torch-2.2.2
+# pairing (never call `tensor.numpy()`).
+
+def _capture_agent_state(agent) -> Dict[str, Any]:
+    """Capture a learned agent's serialisable state_dicts + step counter.
+
+    Works for every learned agent in this repo (IQNAgent and the _DeepRLBase
+    subclasses all expose online_net / target_net / optimizer / _step). Missing
+    attributes are skipped so rule-based agents degrade gracefully.
+    """
+    state: Dict[str, Any] = {}
+    if hasattr(agent, 'online_net'):
+        state['online_net'] = agent.online_net.state_dict()
+    if hasattr(agent, 'target_net'):
+        state['target_net'] = agent.target_net.state_dict()
+    if hasattr(agent, 'optimizer'):
+        state['optimizer'] = agent.optimizer.state_dict()
+    if hasattr(agent, '_step'):
+        state['_step'] = agent._step
+    return state
+
+
+def save_resumable_state(agent, path, extra: Optional[dict] = None) -> None:
+    """Persist agent + RNG state so a split training run resumes equivalently.
+
+    Writes a single `torch.save` bundle containing the agent's own checkpoint
+    (network + optimizer state_dicts and the `_step` counter) and the global
+    RNG state (torch, numpy, and torch.cuda when available), plus any caller
+    `extra` dict (e.g. `{'episode': b}`) for bookkeeping.
+
+    This is the primitive the Design-v2 staged runners (B2) use for
+    `--episodes a:b` resume. The replay buffer is NOT saved (see module note):
+    resume is equivalent-in-distribution once the warm buffer re-fills, not
+    byte-identical. Uses torch.get_rng_state / np.random.get_state, which do
+    not hit the numpy↔torch bridge, so it is safe under numpy-2.x + torch-2.2.2.
+
+    Args:
+        agent: any learned agent (online_net/target_net/optimizer/_step).
+        path : destination file for the single bundled checkpoint.
+        extra: optional JSON-ish dict round-tripped back by load_resumable_state.
+    """
+    import torch  # local import: keep module import-light + torch-optional
+
+    rng_state: Dict[str, Any] = {
+        'torch': torch.get_rng_state(),        # CPU ByteTensor (no numpy bridge)
+        'numpy': np.random.get_state(),        # tuple; pickled by torch.save
+    }
+    if torch.cuda.is_available():
+        rng_state['torch_cuda'] = torch.cuda.get_rng_state_all()
+
+    bundle = {
+        'format_version': 1,
+        'agent_state'   : _capture_agent_state(agent),
+        'rng_state'     : rng_state,
+        'extra'         : dict(extra) if extra else {},
+    }
+    torch.save(bundle, path)
+
+
+def load_resumable_state(agent, path) -> dict:
+    """Restore agent + RNG state saved by `save_resumable_state`; return `extra`.
+
+    Loads the bundle onto CPU (map_location='cpu') — `load_state_dict` then
+    copies weights into the agent's on-device parameters in place, and the
+    torch RNG ByteTensor must live on CPU for `torch.set_rng_state`. Restores
+    the agent's networks/optimizer, the `_step` counter, and the global torch/
+    numpy(/cuda) RNG streams, so subsequent draws continue as if uninterrupted.
+
+    Args:
+        agent: the agent instance to restore into (same architecture as saved).
+        path : bundle written by save_resumable_state.
+
+    Returns:
+        The `extra` dict passed at save time (or {} if none).
+    """
+    import torch  # local import: keep module import-light + torch-optional
+
+    # CPU load: the torch RNG ByteTensor must be CPU for set_rng_state, and
+    # load_state_dict cross-copies CPU weights into on-device params fine.
+    bundle = torch.load(path, map_location='cpu')
+
+    agent_state = bundle.get('agent_state', {})
+    if hasattr(agent, 'online_net') and 'online_net' in agent_state:
+        agent.online_net.load_state_dict(agent_state['online_net'])
+    if hasattr(agent, 'target_net') and 'target_net' in agent_state:
+        agent.target_net.load_state_dict(agent_state['target_net'])
+    if hasattr(agent, 'optimizer') and 'optimizer' in agent_state:
+        agent.optimizer.load_state_dict(agent_state['optimizer'])
+    if hasattr(agent, '_step') and '_step' in agent_state:
+        agent._step = agent_state['_step']
+
+    rng_state = bundle.get('rng_state', {})
+    if 'torch' in rng_state:
+        torch.set_rng_state(rng_state['torch'])
+    if 'numpy' in rng_state:
+        np.random.set_state(rng_state['numpy'])
+    if 'torch_cuda' in rng_state and torch.cuda.is_available():
+        torch.cuda.set_rng_state_all(rng_state['torch_cuda'])
+
+    return bundle.get('extra', {})
+
+
+# ============================================================================
 # Training configuration
 # ============================================================================
 
@@ -94,8 +220,20 @@ class TrainerConfig:
     n_final_eval     : int   = 500       # episodes for final evaluation
 
     # ── Checkpointing ─────────────────────────────────────────
+    # checkpoint_freq is config-driven (this field is the single source of
+    # truth) — nothing hard-codes the interval in the loop below. Default kept
+    # at 5_000 to preserve legacy behaviour; the Design-v2 runner (B2) passes
+    # 2_000 explicitly rather than relying on a code-level constant.
     checkpoint_freq  : int   = 5_000     # save every N episodes
     checkpoint_dir   : str   = 'results/checkpoints'
+
+    # ── Replay buffer (record / passthrough) ──────────────────
+    # Recorded here so the training-run config captures the intended replay
+    # capacity in one place. NOTE: the Trainer does NOT build the buffer —
+    # each learned agent constructs its own ReplayBuffer from AgentConfig/
+    # DeepRLConfig.replay_capacity. This field is a passthrough/record for the
+    # Design-v2 runner and provenance; it does not itself resize any buffer.
+    replay_capacity  : int   = 100_000   # intended replay capacity (record only)
 
     # ── Logging ───────────────────────────────────────────────
     log_freq         : int   = 100       # print progress every N episodes
@@ -272,6 +410,7 @@ class Trainer:
         agent,
         env,
         eval_env : Optional[Any] = None,
+        start_episode : int = 1,
     ) -> TrainingLog:
         """
         Run the full training loop.
@@ -280,6 +419,13 @@ class Trainer:
             agent:    any agent implementing the project's interface
             env:      training environment (reset/step/seed)
             eval_env: separate evaluation environment (optional)
+            start_episode: 1-indexed episode to begin the loop at. Defaults to
+                1, which reproduces the legacy behaviour byte-for-byte
+                (`range(1, n_episodes+1)`). Passing a value > 1 lets a
+                Design-v2 staged runner (B2) resume a split `--episodes a:b`
+                run at episode `a` after restoring state via
+                `load_resumable_state`; the episode-numbered checkpoints and
+                periodic eval/log cadence then line up with a single run.
 
         Returns:
             TrainingLog with all training data
@@ -319,7 +465,11 @@ class Trainer:
               f'Checkpoint every {cfg.checkpoint_freq}')
 
         # ── Main training loop ────────────────────────────────
-        for ep in range(1, cfg.n_episodes + 1):
+        # start_episode defaults to 1 → range(1, n_episodes+1), identical to
+        # the legacy loop. `ep` is pre-seeded so the post-loop bookkeeping
+        # (log.total_episodes = ep) is well-defined even if the range is empty.
+        ep = start_episode - 1
+        for ep in range(start_episode, cfg.n_episodes + 1):
             state     = env.reset()
             ep_reward = 0.0
             ep_steps  = 0
@@ -498,8 +648,11 @@ class Trainer:
         cfg = self.cfg
 
         if cfg.use_eps_schedule:
-            # Estimate total steps for schedule length
-            estimated_steps = cfg.n_episodes * 15  # ~15 steps/episode for N=10
+            # Estimate total UPDATE-STEPS for schedule length. The `* 15` is a
+            # heuristic steps/episode factor (valid for horizons N≈10-20); it is
+            # an ESTIMATE used only to size the ε schedule, NOT an episode budget
+            # and NOT a hard cap on training length.
+            estimated_steps = cfg.n_episodes * 15  # ~15 steps/episode for N≈10-20
             eps_cfg = EpsilonConfig(
                 strategy    = cfg.eps_strategy,
                 start       = getattr(agent, 'cfg', None) and agent.cfg.epsilon_start or 1.0,
@@ -514,6 +667,8 @@ class Trainer:
         if cfg.use_lr_schedule and hasattr(agent, 'optimizer'):
             # Get base LR from agent's optimizer
             base_lr = agent.optimizer.param_groups[0]['lr']
+            # Same heuristic estimate as above (~15 update-steps/episode for
+            # N≈10-20) — used only to size the LR schedule, not an episode budget.
             estimated_steps = cfg.n_episodes * 15
             lr_cfg = LRConfig(
                 strategy     = cfg.lr_strategy,

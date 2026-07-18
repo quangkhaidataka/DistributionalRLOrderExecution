@@ -221,6 +221,48 @@ def is_in_bps(is_array: np.ndarray) -> np.ndarray:
 # Episode tracker — accumulates env.step() outputs
 # ============================================================================
 
+def conditional_stats(
+    is_array: np.ndarray,
+    flags   : np.ndarray,
+    alphas  : tuple = (0.90, 0.95),
+) -> Dict[str, object]:
+    """Partition per-episode IS by a boolean episode flag and stat each group.
+
+    Generic helper for flag-conditioned breakdowns (Design-v2 B3: stress-hit vs
+    calm episodes). `flags[i]` True → episode i goes to the 'hit' group, else
+    'calm'. Each group reports mean/std/max/CVaR_α in bps plus its episode count;
+    an empty group reports NaNs. Also returns the overall 'hit_frac'.
+
+    Returns:
+        {'hit': {...}, 'calm': {...}, 'hit_frac': float, 'n': int}
+    """
+    arr   = np.asarray(is_array, dtype=np.float64)
+    flags = np.asarray(flags, dtype=bool)
+    assert arr.shape == flags.shape, (arr.shape, flags.shape)
+
+    def _group(mask: np.ndarray) -> Dict[str, float]:
+        sub = arr[mask]
+        if sub.size == 0:
+            out = {'n': 0, 'mean_IS_bps': float('nan'), 'std_IS_bps': float('nan'),
+                   'max_IS_bps': float('nan')}
+            for a in alphas:
+                out[f'CVaR_{a:.2f}_bps'] = float('nan')
+            return out
+        bps = is_in_bps(sub)
+        out = {'n': int(sub.size), 'mean_IS_bps': mean_is(bps),
+               'std_IS_bps': std_is(bps), 'max_IS_bps': max_is(bps)}
+        for a in alphas:
+            out[f'CVaR_{a:.2f}_bps'] = cvar_alpha(bps, a)
+        return out
+
+    return {
+        'hit'     : _group(flags),
+        'calm'    : _group(~flags),
+        'hit_frac': float(flags.mean()) if flags.size else 0.0,
+        'n'       : int(arr.size),
+    }
+
+
 @dataclass
 class StepRecord:
     """One step within an episode."""
@@ -228,6 +270,7 @@ class StepRecord:
     x_t        : float   # shares executed
     p_exec     : float   # execution price
     q_remaining: float   # inventory after trade
+    at_cap     : bool = False   # traded exactly at the per-step cap (q0 mode)
 
 
 class EpisodeTracker:
@@ -284,6 +327,7 @@ class EpisodeTracker:
             x_t         = info.get('x_t', 0.0),
             p_exec      = info.get('p_exec', 0.0),
             q_remaining = info.get('q_remaining', 0.0),
+            at_cap      = bool(info.get('at_cap', False)),
         ))
 
     def end_episode(self, info: Optional[Dict] = None) -> None:
@@ -318,6 +362,23 @@ class EpisodeTracker:
         """IS values as numpy array, shape (n_episodes,)."""
         return np.array(self.is_values, dtype=np.float64)
 
+    def cap_frac(self) -> float:
+        """Fraction of decision steps that traded exactly at the per-step cap.
+
+        Diagnostic for the Design-v2 q0 action mode: a value near 1.0 means the
+        agent pins the cap (≈ MaxSpeed); ≈0 means it never saturates. Computed
+        over all steps of all episodes (terminal force-sells report at_cap=False,
+        so they are excluded). Returns 0.0 in legacy 'remaining' mode (no flag).
+        """
+        total = 0
+        hits  = 0
+        for traj in self.all_trajectories:
+            for rec in traj:
+                total += 1
+                if getattr(rec, 'at_cap', False):
+                    hits += 1
+        return float(hits / total) if total else 0.0
+
     def compute_metrics(
         self,
         alphas: Optional[List[float]] = None,
@@ -351,6 +412,7 @@ class EpisodeTracker:
             'GL_ratio'      : gain_loss_ratio(arr),
             'sortino'       : sortino_ratio(arr),
             'mean_reward'   : float(np.mean(self.episode_rewards)),
+            'cap_frac'      : self.cap_frac(),
         }
 
         for a in alphas:

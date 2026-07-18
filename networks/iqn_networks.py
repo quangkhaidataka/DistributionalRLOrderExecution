@@ -53,10 +53,16 @@ class NetworkConfig:
     not 84×84 pixels — a large Atari-style network would
     massively overfit on tabular financial features.
     """
-    state_dim        : int   = 5      # our MDP state dimension
-    n_actions        : int   = 6      # {0, 0.2, 0.4, 0.6, 0.8, 1.0} of inventory
-    hidden_dim       : int   = 128    # embedding dimension d
-    cos_embedding_dim: int   = 64     # n in cosine embedding (paper uses 64)
+    # NOTE (Design-v2 B1): input/output dims are fully driven by
+    # (state_dim, n_actions) — no action/state count is hard-coded in the
+    # forward path (the output reshape uses cfg.n_actions). These defaults are
+    # only fallbacks; the pipeline always passes explicit values via AgentConfig.
+    # The width defaults match the UNIFIED architecture (d=64, cosine n=32) so a
+    # bare NetworkConfig() builds the real net rather than a stale 128/64 one.
+    state_dim        : int   = 5      # execution-MDP state dim (5-D; 6-D with σ̂)
+    n_actions        : int   = 6      # size of the discrete action grid
+    hidden_dim       : int   = 64     # embedding dimension d (unified)
+    cos_embedding_dim: int   = 32     # n in cosine embedding (unified)
     n_hidden_layers  : int   = 2      # depth of state encoder + output MLP
     n_tau_samples    : int   = 8      # N taus sampled per forward pass (train)
     n_tau_policy     : int   = 32     # N taus for greedy action selection

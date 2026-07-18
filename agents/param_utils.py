@@ -9,9 +9,12 @@ Unified architecture (PLAN.md D1):
     IQN       : hidden_dim=64, cos_embedding_dim=32, n_hidden_layers=2
     DQN/DDQN  : hidden_dim=64, n_hidden_layers=2   (same LayerNorm+ReLU backbone)
 
-For the execution MDP (state_dim=5, n_actions=6) this gives:
-    IQN trainable params      = 11462
-    DQN/DDQN trainable params = 5190
+Counts scale with (state_dim, n_actions). The canonical configs (Design-v2 B1):
+    (state_dim=5,  n_actions=6)  → IQN 11462 · DQN/DDQN 5190   (legacy sim/TAQ)
+    (state_dim=6,  n_actions=11) → IQN 11851 · DQN/DDQN 5579   (v2: +σ̂ feature, q0 grid)
+    (state_dim=5,  n_actions=11) → IQN 11787 · DQN/DDQN 5515
+    (state_dim=6,  n_actions=6)  → IQN 11526 · DQN/DDQN 5254
+See ``EXPECTED_PARAM_COUNTS`` below (computed from the helpers, never transcribed).
 
 Counts are over ``net.parameters()`` (trainable only). The IQN cosine
 buffer ``quantile_embed.i_vals`` (32 values) is a registered buffer, NOT a
@@ -72,6 +75,23 @@ def expected_counts(state_dim: int, n_actions: int) -> tuple[int, int]:
     """
     return (iqn_param_count(state_dim, n_actions),
             mlp_param_count(state_dim, n_actions))
+
+
+# Canonical (state_dim, n_actions) configs and their expected (iqn, mlp) trainable
+# param counts. Computed from the parametric helpers above so this table can never
+# drift away from them — a single source of truth for the build-time guard.
+_CANONICAL_CONFIGS = [(5, 6), (5, 11), (6, 6), (6, 11)]
+EXPECTED_PARAM_COUNTS: dict[tuple[int, int], tuple[int, int]] = {
+    (sd, na): expected_counts(sd, na) for (sd, na) in _CANONICAL_CONFIGS
+}
+
+
+def param_count_table_str() -> str:
+    """Human-readable table of expected (IQN, MLP) counts per canonical config."""
+    lines = ['  [param-table] (state_dim, n_actions) -> IQN / DQN·DDQN trainable params']
+    for (sd, na), (iqn, mlp) in EXPECTED_PARAM_COUNTS.items():
+        lines.append(f'    ({sd:>1d}, {na:>2d}) -> IQN {iqn:>6d} / MLP {mlp:>6d}')
+    return '\n'.join(lines)
 
 
 def assert_param_count(agent, expected: int, label: str | None = None) -> int:

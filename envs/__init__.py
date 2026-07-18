@@ -10,7 +10,8 @@ Usage:
     from envs.taq_env import TAQEnv, TAQConfig
 """
 
-from envs.base_env        import BaseExecutionEnv, EnvConfig, ACTION_FRACS, N_ACTIONS
+from envs.base_env        import (BaseExecutionEnv, EnvConfig, ACTION_FRACS,
+                                  N_ACTIONS, feasible_action_mask)
 from envs.simulated_env   import AlmgrenChrissEnv, RegimeSwitchingEnv, SimConfig
 # P1-T0: lobster_env.py was moved to unnecessary_files/ and is not part of the
 # sim/TAQ pipeline. Importing it here broke every `from envs ...` import.
@@ -25,6 +26,7 @@ __all__ = [
     'EnvConfig',
     'ACTION_FRACS',
     'N_ACTIONS',
+    'feasible_action_mask',
     # Simulated
     'AlmgrenChrissEnv',
     'MeanRevertingEnv',

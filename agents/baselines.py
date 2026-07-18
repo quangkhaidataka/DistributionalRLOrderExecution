@@ -66,8 +66,14 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from envs.base_env import EnvConfig, ACTION_FRACS
+from envs.base_env import EnvConfig, ACTION_FRACS, feasible_action_mask
 from training.replay_buffer import ReplayBuffer, ReplayConfig
+
+
+def _resolve_fracs(env_config: EnvConfig) -> np.ndarray:
+    """The env's action grid (config override, else the legacy module grid)."""
+    fr = getattr(env_config, 'action_fracs', None)
+    return np.asarray(fr if fr is not None else ACTION_FRACS, dtype=np.float64)
 
 
 # ============================================================================
@@ -146,47 +152,44 @@ class TWAPAgent(BaseAgent):
         self.cfg             = env_config
         self.twap_per_period = env_config.q0 / env_config.N  # fixed shares/period
         self._period         = 0
+        self._fracs          = _resolve_fracs(env_config)
+        self._basis          = getattr(env_config, 'action_basis', 'remaining')
 
     def reset(self) -> None:
         """Must be called at the start of each episode."""
         self._period = 0
 
-    def select_action(self, state: np.ndarray, eval_mode: bool = False) -> int:
+    def select_action(self, state: np.ndarray, eval_mode: bool = False):
         """
-        Find the action that executes closest to the cumulative TWAP target.
+        Execute closest to the cumulative TWAP target — N-agnostic.
 
-        TWAP requires selling q0/N shares in each of N periods. With a
-        discrete action set {0%, 25%, 50%, 75%, 100%} of REMAINING inventory,
-        a naive "sell 10% of remaining" approach fails because 10% is not
-        a member of the action set and the argmin maps to 0% (action=0).
+        TWAP sells q0/N shares in each of N periods. Staying on schedule is done
+        in ABSOLUTE shares via a cumulative deficit (a naive "fraction of
+        remaining" collapses to action 0 when the fraction is off-grid).
 
-        Correct approach — target absolute shares, not fractions:
-            cumulative_target_k = (k + 1) * (q0 / N)
-            deficit_k = cumulative_target_k - (q0 - q_remaining)
-            Select action whose absolute sell = ACTION_FRACS[a] * q_remaining
-            is closest to deficit_k.
-
-        This ensures the agent stays on the TWAP schedule in absolute terms.
+        Basis-aware execution:
+          - 'remaining' (legacy): project the deficit onto the grid as a fraction
+            of REMAINING inventory (byte-identical to the original) → int index.
+          - 'q0': return the deficit as a continuous fraction of q0 (exact, not
+            grid-projected) → float; the env executes min(frac·q0, q_t).
         """
         q_remaining = state[1] * self.cfg.q0   # denormalize q* → shares
 
         if q_remaining < 1e-6:
+            self._period += 1
             return 0
 
         # Shares that should have been sold INCLUDING this period
         cumulative_target = (self._period + 1) * self.twap_per_period
         cumulative_sold   = self.cfg.q0 - q_remaining
-        # Deficit: how many shares to sell to stay on schedule
         deficit  = float(np.clip(cumulative_target - cumulative_sold, 0.0, q_remaining))
 
-        # Absolute shares each action would sell
-        candidate_x = ACTION_FRACS * q_remaining   # (5,)
-
-        # Select action minimising |sell - deficit|
-        action = int(np.argmin(np.abs(candidate_x - deficit)))
-
         self._period += 1
-        return action
+        if self._basis == 'remaining':
+            candidate_x = self._fracs * q_remaining
+            return int(np.argmin(np.abs(candidate_x - deficit)))
+        # q0 basis: continuous fraction of the ORIGINAL block
+        return float(deficit / self.cfg.q0)
 
     @property
     def name(self) -> str:
@@ -215,17 +218,60 @@ class ImmediateLiquidationAgent(BaseAgent):
     """
 
     def __init__(self, env_config: EnvConfig):
-        self.cfg = env_config
+        self.cfg    = env_config
+        self._fracs = _resolve_fracs(env_config)
+        self._basis = getattr(env_config, 'action_basis', 'remaining')
+
+    def reset(self) -> None:
+        pass
+
+    def select_action(self, state: np.ndarray, eval_mode: bool = False):
+        # 'remaining': the max grid frac is 1.0 → full liquidation (int index).
+        # 'q0': the grid caps below 1.0, so return a continuous 1.0 fraction of
+        #       q0 (env clips to q_t) to actually dump the whole block at t0.
+        if self._basis == 'remaining':
+            return len(self._fracs) - 1
+        return 1.0
+
+    @property
+    def name(self) -> str:
+        return 'Immediate-Liquidation'
+
+
+# ============================================================================
+# 1c. MaxSpeed Agent
+# ============================================================================
+
+class MaxSpeedAgent(BaseAgent):
+    """
+    Maximum-speed execution: trade at the per-step CAP every period until the
+    inventory is exhausted.
+
+    In the Design-v2 'q0' action mode the grid is capped (e.g. max frac = 0.25 of
+    q0), so MaxSpeed is the fastest schedule the discrete agents CAN follow — the
+    natural upper bound on execution speed once dumping-at-t0 is ruled out by the
+    cap. With cap=0.25 and N=20 it liquidates in 4 periods: (0.25, 0.25, 0.25,
+    0.25, 0, …). It is the aggressive counterpart to TWAP and the reference for
+    "did the learned agent just pin the cap?" (the cap_frac diagnostic).
+
+    Implementation: always select the cap action (the max grid index). The env
+    clips (min(cap·q0, q_t)) so once inventory is gone the sells are no-ops.
+    """
+
+    def __init__(self, env_config: EnvConfig):
+        self.cfg     = env_config
+        self._fracs  = _resolve_fracs(env_config)
+        self._cap_ix = len(self._fracs) - 1   # index of the max (cap) fraction
 
     def reset(self) -> None:
         pass
 
     def select_action(self, state: np.ndarray, eval_mode: bool = False) -> int:
-        return len(ACTION_FRACS) - 1   # full-liquidation action (fraction 1.0)
+        return self._cap_ix
 
     @property
     def name(self) -> str:
-        return 'Immediate-Liquidation'
+        return 'MaxSpeed'
 
 
 # ============================================================================
@@ -277,6 +323,8 @@ class AlmgrenChrissAgent(BaseAgent):
     def __init__(self, env_config: EnvConfig, risk_aversion: float = 1e-6):
         self.cfg    = env_config
         self.lam    = risk_aversion
+        self._fracs = _resolve_fracs(env_config)
+        self._basis = getattr(env_config, 'action_basis', 'remaining')
 
         # Pre-compute the entire schedule at initialisation.
         # Schedule is deterministic — no adaptation to market conditions.
@@ -345,14 +393,18 @@ class AlmgrenChrissAgent(BaseAgent):
         """Reset period counter for new episode."""
         self._period = 0
 
-    def select_action(self, state: np.ndarray, eval_mode: bool = False) -> int:
+    def select_action(self, state: np.ndarray, eval_mode: bool = False):
         """
         Look up the pre-computed AC schedule for the current period.
-        Convert shares-to-sell into the closest discrete action.
 
-        The AC agent is completely open-loop: it ignores market state
-        and simply executes the pre-computed schedule. This is the key
-        limitation that RL agents overcome.
+        The AC agent is completely open-loop: it ignores market state and
+        executes the pre-computed sinh schedule — the key limitation RL overcomes.
+
+        Basis-aware execution:
+          - 'remaining' (legacy): project the target onto the grid as a fraction
+            of REMAINING inventory (byte-identical to the original) → int index.
+          - 'q0': execute the CONTINUOUS sinh amount as a fraction of q0 (exact,
+            NOT grid-projected) → float; the env executes min(frac·q0, q_t).
         """
         if self._period >= self.cfg.N:
             return 0
@@ -363,18 +415,15 @@ class AlmgrenChrissAgent(BaseAgent):
             self._period += 1
             return 0
 
-        # Target shares for this period
+        # Target shares for this period (from the pre-computed schedule)
         target_x = self._schedule[self._period]
-
-        # Convert to fraction of remaining inventory
-        target_frac = float(np.clip(target_x / (q_remaining + 1e-8), 0.0, 1.0))
-
-        # Find closest discrete action
-        diffs  = np.abs(ACTION_FRACS - target_frac)
-        action = int(np.argmin(diffs))
-
         self._period += 1
-        return action
+
+        if self._basis == 'remaining':
+            target_frac = float(np.clip(target_x / (q_remaining + 1e-8), 0.0, 1.0))
+            return int(np.argmin(np.abs(self._fracs - target_frac)))
+        # q0 basis: continuous fraction of the ORIGINAL block (not grid-projected)
+        return float(np.clip(target_x / self.cfg.q0, 0.0, 1.0))
 
     @property
     def schedule(self) -> np.ndarray:
@@ -528,12 +577,23 @@ class _DeepRLBase(BaseAgent):
     """
 
     def __init__(self, cfg: DeepRLConfig, state_dim: int, n_actions: int,
-                 device: Optional[torch.device] = None, seed: int = 42):
+                 device: Optional[torch.device] = None, seed: int = 42,
+                 action_fracs: Optional[np.ndarray] = None,
+                 action_basis: str = 'remaining'):
         self.cfg       = cfg
         self.state_dim = state_dim
         self.n_actions = n_actions
         self.device    = device or self._auto_device()
         self._step     = 0
+
+        # Feasible-action masking (Design-v2 B1). Defaults reproduce the legacy
+        # no-mask behaviour byte-for-byte; 'q0' basis masks selection + target-max
+        # via the shared feasible_action_mask (single source of truth).
+        self.action_basis = action_basis
+        self.action_fracs = np.asarray(
+            action_fracs if action_fracs is not None else ACTION_FRACS,
+            dtype=np.float64)
+        self._use_masking = (action_basis == 'q0')
 
         torch.manual_seed(seed)
         np.random.seed(seed)
@@ -562,16 +622,44 @@ class _DeepRLBase(BaseAgent):
 
     def select_action(self, state: np.ndarray, eval_mode: bool = False) -> int:
         epsilon = self._get_epsilon() if not eval_mode else 0.0
+
+        if not self._use_masking:
+            # Legacy path: byte-identical RNG usage.
+            if np.random.random() < epsilon:
+                return np.random.randint(0, self.n_actions)
+            state_t  = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+            q_values = self._get_q_values(state_t)     # (1, A)
+            return int(q_values.argmax(dim=-1).item())
+
+        # Masked path ('q0' basis): explore/greedy over feasible actions only.
+        mask     = feasible_action_mask(state[1], self.action_fracs, self.action_basis)
+        feasible = np.flatnonzero(mask)
         if np.random.random() < epsilon:
-            return np.random.randint(0, self.n_actions)
+            return int(np.random.choice(feasible))
         state_t  = torch.FloatTensor(state).unsqueeze(0).to(self.device)
-        q_values = self._get_q_values(state_t)     # (1, A)
-        return int(q_values.argmax(dim=-1).item())
+        q_np     = np.asarray(self._get_q_values(state_t).squeeze(0).detach().cpu().tolist(),
+                              dtype=np.float64)
+        q_np[~mask] = -np.inf
+        return int(np.argmax(q_np))
 
     @torch.no_grad()
     def _get_q_values(self, state_t: torch.Tensor) -> torch.Tensor:
         """Q-values for action selection. Overridden in QR-DQN."""
         return self.online_net(state_t)
+
+    def _mask_bias(self, states: torch.Tensor) -> torch.Tensor:
+        """Additive Q-bias (0 feasible, -inf infeasible) for a batch of states.
+
+        Shared by the DQN/DDQN Bellman target-max so it forbids exactly the
+        actions the policy forbids (single-source masking). Only called when
+        self._use_masking.
+        """
+        # tensor.numpy()/torch.from_numpy are broken under numpy-2.x + torch-2.2.2
+        # (see CLAUDE.md) — round-trip through .tolist() instead.
+        q_norm = np.asarray(states[:, 1].detach().cpu().tolist(), dtype=np.float64)
+        mask   = feasible_action_mask(q_norm, self.action_fracs, self.action_basis)
+        bias   = np.where(mask, 0.0, -np.inf).astype(np.float32)
+        return torch.tensor(bias.tolist(), dtype=torch.float32, device=states.device)
 
     def store(self, state, action, reward, next_state, done) -> None:
         self.replay.push(state, action, reward, next_state, done)
@@ -672,9 +760,11 @@ class DQNAgent(_DeepRLBase):
         q_curr = self.online_net(states)                        # (B, A)
         q_sa   = q_curr.gather(1, actions.unsqueeze(1)).squeeze(1)  # (B,)
 
-        # Target Q-values: max_{a'} Q(s', a'; θ⁻)
+        # Target Q-values: max_{a'} Q(s', a'; θ⁻)  (masked to feasible a')
         with torch.no_grad():
             q_next  = self.target_net(next_states)              # (B, A)
+            if self._use_masking:
+                q_next = q_next + self._mask_bias(next_states)
             v_next  = q_next.max(dim=1).values                  # (B,)   max over a'
             targets = rewards + self.cfg.gamma * (1.0 - dones) * v_next  # (B,)
 
@@ -744,8 +834,11 @@ class DDQNAgent(_DeepRLBase):
         q_sa   = q_curr.gather(1, actions.unsqueeze(1)).squeeze(1)  # (B,)
 
         with torch.no_grad():
-            # Double DQN: online net selects action, target net evaluates
+            # Double DQN: online net selects action, target net evaluates.
+            # Mask the online-net selection to feasible actions only.
             q_next_online = self.online_net(next_states)            # (B, A)
+            if self._use_masking:
+                q_next_online = q_next_online + self._mask_bias(next_states)
             a_star        = q_next_online.argmax(dim=1)             # (B,)
 
             q_next_target = self.target_net(next_states)            # (B, A)
