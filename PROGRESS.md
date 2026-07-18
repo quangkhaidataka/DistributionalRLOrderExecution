@@ -8,9 +8,14 @@
 
 ---
 
-## Current status: Batches A/B1/C done, D dropped → Batch E (review follow-ups) in progress
+## Current status: Batches A/B1/C/E COMPLETE, D dropped → final paper-number handoff
 
-**Batch E** (cheap CPU follow-ups from the B1/C review): **E1 DONE** — Immediate-Liquidation baseline (`ImmediateLiquidationAgent` + `run_il_baseline.py`) evaluated in AC/JD/TAQ → `results/_il_baseline/`. Key finding: IL=(2.084,2.084) in AC/JD (= DDQN's JD collapse); **on TAQ, IQN-CVaR₀.₉₅ ≡ IL exactly** — the headline TAQ CVaR result is a dump-at-t₀ policy. **E2** (DDQN jump-sensitivity rows) and **E3** (selection-rule appendix, eval-only) in progress. Batch D (width ablation) dropped (not blocking). See PLAN.md "Batch E" + Decision log.
+**Batch E DONE** (cheap CPU review follow-ups; `results/_batch_e_report.md`):
+- **E1 — Immediate-Liquidation baseline** (`ImmediateLiquidationAgent` + `run_il_baseline.py`, AC/JD/TAQ → `results/_il_baseline/`): IL=(2.084,2.084) in AC/JD (= DDQN's JD collapse); **on TAQ IQN-CVaR₀.₉₅ ≡ IL exactly** — the headline TAQ CVaR win is a dump-at-t₀ policy.
+- **E2 — DDQN jump-sensitivity rows** (`run_jump_sensitivity.py --ddqn-level`, new subdirs): DDQN dumps at all 3 λ (dump 0.965/0.999/0.999), even at low λ where IQN-neutral does not.
+- **E3 — selection-rule appendix** (`run_selection_appendix.py`, eval-only, 1200-ep CRN val, 5 seeds → `results/_selection_appendix/`): **DDQN's dump-collapse is a CVaR-selection artifact — it un-dumps under mean-IS selection at 5/5 JD seeds** (Std ~4.4, dump 0.000). Tail-based checkpoint selection *picks* the dump checkpoint; the agent isn't intrinsically degenerate. Main tables stay cvar-selected; this is appendix material.
+
+Batch D (width ablation) dropped (not blocking). Two findings feed the paper narrative (PAPER_FIXES §4.3): the TAQ headline = IL, and the DDQN collapse = selection artifact.
 
 <details><summary>previous status: Batches A/B1/C complete — paper-number handoff (kept)</summary>
 
