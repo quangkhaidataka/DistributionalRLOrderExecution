@@ -1,0 +1,5 @@
+sigma_high,p_01,jump_intensity,jump_std,TWAP_CVaR95,DDQN_std,DDQN_CVaR95,IQNn_std,IQNn_cap_frac,IQNn_CVaR95,gap_0.95,gap_0.9,gap_0.7,gap_0.5,gap_0.3,a_tail,b_nondeg,c_cap,d_positive,d_monotone,d_diff_soft,hard_pass,gap95,recommended
+0.002,0.05,0.1,0.16,13.8448,1.6696,5.1263,3.0422,0.0,9.1047,0.9471,0.7864,1.1339,0.6976,2.413,True,True,True,True,False,False,True,0.9471,True
+0.002,0.1,0.1,0.16,18.6823,2.876,8.7929,2.5892,0.0,7.9882,-0.1576,0.002,-3.5793,-3.6152,-4.6586,True,True,True,False,False,False,True,-0.1576,False
+0.004,0.05,0.1,0.16,13.8738,2.0359,6.9679,1.6799,0.0,5.5437,0.0,0.0,0.0,0.0,-0.0851,True,True,True,False,False,False,True,0.0,False
+0.004,0.1,0.1,0.16,18.6982,3.5789,11.2924,3.5102,0.0,10.7731,0.1583,0.2349,0.3929,0.5422,0.1658,True,True,True,True,False,False,True,0.1583,False

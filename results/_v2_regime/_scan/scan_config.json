@@ -1,0 +1,24 @@
+{
+  "kind": "v2_regime_scan_summary",
+  "smoke": false,
+  "sigma_highs": [
+    0.002,
+    0.004
+  ],
+  "p01s": [
+    0.05,
+    0.1
+  ],
+  "ladder_alphas": [
+    0.95,
+    0.9,
+    0.7,
+    0.5,
+    0.3
+  ],
+  "recommended": {
+    "sigma_high": 0.002,
+    "p_01": 0.05,
+    "gap95": 0.9471494443819122
+  }
+}
