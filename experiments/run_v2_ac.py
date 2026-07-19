@@ -200,11 +200,27 @@ def _save_full_state(path: Path, agent, train_env, log: dict, ep_done: int) -> N
                        'states': rb.states, 'actions': rb.actions,
                        'rewards': rb.rewards, 'next_states': rb.next_states,
                        'dones': rb.dones},
-        'env_rng':    train_env._rng.bit_generator.state,
+        'env_rng':    _capture_env_rng(train_env),
         'log':        log,
         'ep_done':    ep_done,
     }
     torch.save(state, str(path))
+
+
+def _capture_env_rng(env):
+    """Env RNG state, robust to Generator (sim envs) vs RandomState (TAQEnv)."""
+    rng = env._rng
+    if hasattr(rng, 'bit_generator'):
+        return ('generator', rng.bit_generator.state)
+    return ('randomstate', rng.get_state())        # np.random.RandomState (TAQ)
+
+
+def _restore_env_rng(env, saved):
+    kind, st = saved
+    if kind == 'generator':
+        env._rng.bit_generator.state = st
+    else:
+        env._rng.set_state(st)
 
 
 def _load_full_state(path: Path, agent, train_env):
@@ -222,7 +238,7 @@ def _load_full_state(path: Path, agent, train_env):
     rb.rewards[:]     = state['replay']['rewards']
     rb.next_states[:] = state['replay']['next_states']
     rb.dones[:]       = state['replay']['dones']
-    train_env._rng.bit_generator.state = state['env_rng']
+    _restore_env_rng(train_env, state['env_rng'])
     return state['log'], state['ep_done']
 
 
