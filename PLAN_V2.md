@@ -229,6 +229,19 @@ DQN ~14′, DDQN ~15′, IQN ~50′ (split to stay < 30′/job).
 ---
 
 ## Decision log
+- 2026-07-20: **Regime cell LOCKED (Phase-A decision): σ_high=0.002, p₀₁=0.05**
+  (`results/_v2_regime/locked_cell.json`). Rationale: all 4 scan cells pass hard
+  criteria (a) TWAP CVaR₉₅∈[8,20], (b) Std IS>0.05, (c) cap<0.5; the differentiator
+  is the α-ladder, and (0.002,0.05) is the ONLY cell with all-positive α-ladder gaps
+  AND the largest at every α (+0.95 → +2.41 bps). Soft criterion (d) monotone fails
+  in ALL cells at pilot scale → to be judged on the 5-seed mean in Phase B, not the
+  single-seed pilot. **σ̂ (`use_rv_feature`) ENABLED** for the full study (state 6-D;
+  param guard IQN 11851 / DQN·DDQN 5579) — the Phase-A action-vs-spread heatmap was
+  ~FLAT and Δp* is numerically suppressed, so the 5-D state's spread signal isn't
+  driving behaviour. **`feature_scale` stays OFF** (one variable at a time; the fixed
+  price-channel rescale remains B1 backlog, decided later on σ̂-on evidence). A single
+  σ̂-on confirmation pilot (calibration round 2/2) precedes Phase B; the σ̂-off scan
+  outputs are the "σ̂ off" arm of the ablation appendix.
 - 2026-07-19: **B4 done** (code + logic tests; data built). `data/build_taq_3min.py`
   BUILT `AAPL_2014_3min_adj.parquet` (32,742 bars/252 days, 7:1 split-adjusted;
   split continuity +0.22%, bars/day median 130, 0 NaN). `taq_env.py` v2 mode additive

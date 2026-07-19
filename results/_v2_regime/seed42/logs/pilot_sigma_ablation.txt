@@ -1,0 +1,31 @@
+==========================================================================
+  σ̂ CONFIRMATION PILOT — locked cell (σ_high=0.002, p₀₁=0.05), seed 42
+  IQN-neutral, 40k eps (2×20k), 10k-ep eval.  σ̂-off = Phase-A scan arm.
+==========================================================================
+  metric           σ̂-off (5-D)    σ̂-on (6-D)
+  Mean IS                1.9296         2.6512
+  Std IS                 3.0202         1.9313
+  CVaR90                 5.1321         4.1396
+  CVaR95                 7.9031         5.4174
+  Max IS                45.8087        44.4908
+  cap_frac               0.0000         0.0000
+
+  α-ladder gaps (IQN-neutral CVaR95 − IQN-CVaR_α CVaR95, bps):
+   alpha   σ̂-off gap    σ̂-on gap
+     0.3       -0.522       +0.000
+     0.5       +1.171       +0.000
+     0.7       +0.545       +0.000
+     0.9       +1.200       +0.000
+    0.95       +0.524       +0.000
+  (σ̂-off IQN-neutral CVaR95=8.299 ; σ̂-on=5.417)
+
+  Heatmap verdict — range of MEAN traded fraction across feature bins
+  (larger range ⇒ policy adapts to the feature):
+    action-vs-spread : σ̂-off 0.0053  |  σ̂-on 0.0000
+    action-vs-σ̂     : σ̂-on 0.0000  (σ̂-off has no σ̂ feature)
+
+  Feature-scale (σ̂-on, 6-D) per-feature std, 2 views:
+       view |       t*       q*      Δp*  spread*     imb*      σ̂*
+   no_trade |   0.3028   0.2130   0.0005   0.0154   0.1305   0.2522
+     policy |   0.0854   0.3416   0.0003   0.0148   0.1277   0.3840
+==========================================================================
