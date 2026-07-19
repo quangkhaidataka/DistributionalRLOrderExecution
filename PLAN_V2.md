@@ -64,6 +64,20 @@
 
 **Exit gate of B1: T1–T6 all PASS (T1 is the hard gate). Then commit + push.**
 
+### B1 backlog (OPTIONAL — code at the next convenient touch; does NOT block B2–B4)
+
+- **`feature_scale` config flag** (`envs/base_env.py`): a fixed per-feature multiplier
+  vector applied in `_build_state`, default = all-ones (byte-identical legacy behaviour,
+  T1 gate unaffected). Motivation: input features have unequal magnitudes — Δp* is
+  ~1e-4–1e-3 while t*/q* are O(1) and spread* ~0.02 — so the price channel is numerically
+  suppressed (hidden LayerNorm only partially compensates). Candidate value: scale Δp* by
+  1/(σ√T) — "price move in cumulative-sigma units", O(1) with a clean financial meaning.
+  NO running/statistical standardization (breaks reproducibility, moves Bellman targets,
+  invalidates the regression gate). Activation is DATA-DRIVEN: only if the Phase-A
+  feature-scale diagnostic (Pipeline 2 step A3b) shows the policy is price-blind AND the
+  mechanism under study needs the price channel. Any activation is a config change logged
+  in the decision log; legacy default keeps T1 passing.
+
 ---
 
 ## B2 — AC study (code + logic tests only)
@@ -159,6 +173,12 @@ Budget: ≈55′ compute/seed → ~5h total; ~20 train jobs + 5 assemble jobs.
    - 10k-episode eval per agent; criteria checker scores the cell on (a)–(d).
 3. Outputs: **T-RG-0** (`_scan/scan_summary.{txt,csv}`, 4 cells × PASS/FAIL + recommended
    cell) and the action-vs-spread heatmap for IQN-neutral in the recommended cell.
+3b. **Feature-scale diagnostic** (cheap, part of the scan report): per-feature std/range
+   of the state vector over ≥1,000 episodes (no-trade + pilot-policy), printed next to
+   the heatmap. Read together at the STOP: policy responds to spread ⇒ current scaling is
+   adequate for the mechanism, change nothing; policy price-blind AND the price channel
+   matters ⇒ consider enabling the `feature_scale` flag for Δp* (B1 backlog) before
+   Phase B. Decision is the user's, recorded in the decision log.
 4. **STOP — user decisions (Claude Code proposes, user disposes):**
    - Lock the calibration cell → write `locked_cell.json`.
    - σ̂ on/off: heatmap shows action varying with spread → keep 5-D state; heatmap flat →
@@ -208,86 +228,25 @@ DQN ~14′, DDQN ~15′, IQN ~50′ (split to stay < 30′/job).
 
 ---
 
-## B1 status — COMPLETE (2026-07-18)
-
-All 14 B1 files landed on `feature/design-v2`; the exit gate is GREEN:
-- **T1 (hard gate)** `scripts/regression_gate.py` — legacy JD IQN-neutral (ep7000, 10k eps, seed 100041) reproduces the locked `all_results.json` **EXACTLY (Δ=0 on Mean/Std/CVaR₉₀/CVaR₉₅/Max)**.
-- **T2/T3/T4/T6** `tests/test_v2_env.py` (16 checks) · **T5** `tests/test_v2_smoke.py`.
-- **No legacy regression:** `run_tests` 32/32 · `test_agent` 27/27 · `test_baseline` 76/76.
-
-What shipped: `EnvConfig.action_basis|action_fracs|use_rv_feature|rv_window` (defaults = legacy), the single-source `feasible_action_mask`, q0-basis `step()` (`x_t=min(a·q0,q_t)`, continuous-float path for AC/TWAP/IL), dynamic per-instance `state_dim`/`n_actions`; masked selection + masked Bellman target-max in IQN & DQN/DDQN (legacy path byte-identical); `MaxSpeedAgent`; N-agnostic continuous TWAP/AC; `param_utils.EXPECTED_PARAM_COUNTS` (v2 (6,11)→11851/5579); `metrics.cap_frac`+`conditional_stats`; `exp_utils.prepare_v2_output_dir`; `training.save/load_resumable_state`; ε-decay unit doc; `experiments/selection_lib.select_checkpoints`.
-
-> **GOTCHA for all v2 work — numpy-2.x NEP-50 weak promotion.** The legacy env computed `x_t = ACTION_FRACS[a] * q_t` in **float32** (float32-array element × Python float → float32). Widening to a Python float (`float(fracs[a]) * q_t`) silently upgrades the whole IS computation to float64 and shifts the locked numbers by ~1e-4 bps — the T1 gate caught it. The legacy `remaining` branch KEEPS the float32 arithmetic; only the new `q0` branch uses float64. Re-run `scripts/regression_gate.py` after ANY touch to `base_env.step()`.
-
-## B3 status — COMPLETE (code + logic tests only; 2026-07-18)
-
-Five items landed on `feature/design-v2`; env validated statistically, runners
-smoke-tested (NO full runs — the 2×2 scan itself is B5):
-- `envs/regime_jump_env.py` — `RegimeJumpEnv(AlmgrenChrissEnv)`: hidden 2-state
-  Markov vol (σ_low=0.0005 & p₁₀=0.40 FIXED class constants; σ_high & p₀₁ from
-  config), compound-Poisson jumps ONLY in stress (λ_J=0.1/period, σ_J=0.16, μ_J=0),
-  spread ×3 in stress. Per-step info: `regime, stress, n_jumps, spread, stress_hit`.
-  Existing env classes untouched. Works with `use_rv_feature` on/off.
-- `experiments/run_v2_regime_scan.py` — 2×2 pilot scan σ_high∈{0.002,0.004}×
-  p₀₁∈{0.05,0.10}, seed 42, agents TWAP+DDQN+IQN-neutral; hard criteria
-  (a) TWAP CVaR₉₅∈[8,20], (b) Std IS>0.05 all learned, (c) IQN-neutral cap-sat
-  <50%, (d) soft neutral−CVaR gap monotone in α → `results/_v2_regime/_scan/
-  scan_summary.{txt,csv}` + recommended cell. STOPS (user locks the cell).
-- `experiments/run_v2_regime.py` — full staged CLI (reuses run_v2_ac's train
-  machinery); reads the LOCKED cell from `results/_v2_regime/locked_cell.json`
-  (errors clearly if missing); assemble-eval adds the T-RG-3 regime breakdown +
-  action-vs-spread heatmap + α-ladder.
-- `evaluation/tables_v2.py` (extended) — `regime_breakdown_table` /
-  `write_regime_breakdown` / `regime_breakdown_latex` (stress-hit vs calm ×
-  {Mean, CVaR₉₅}) + `action_spread_heatmap` (csv+png). B2 API untouched.
-- `tests/test_v2_regime_env.py` — 10k no-trade episodes/cell: stress_frac ≈ π
-  (Δ<0.003), zero calm jumps, jump rate 0.098–0.099 ≈ 0.10, spread ratio 3.00;
-  + 200-ep masked smoke per learned agent.
-
-> **stress_hit semantics.** `_evolve_price` transitions the regime BEFORE the
-> first price move, so the initial regime R₀ only seeds the chain (and sets the
-> initial spread) — it never drives price/jumps. `stress_hit` therefore counts
-> only the N price-evolution regimes R₁…R_N (matches per-step `info['stress']`),
-> which is the right conditioning variable for the IS-tail breakdown.
-
-Tables produced later in B5: T-RG-0 (scan), T-RG-1 (main), **T-RG-2 (α-ladder —
-thesis headline)**, T-RG-3 (stress vs calm), T-RG-4 (5-seed aggregate).
-
-## B2 status — COMPLETE (code + logic tests only; 2026-07-18)
-
-Three files landed on `feature/design-v2`; all logic tests green (no full runs):
-- `experiments/run_v2_ac.py` — staged AC CLI (`--only-agent`, `--episodes a:b`,
-  `--total-episodes`, `--assemble-eval`, `--smoke`, `--force-resume`); v2 config
-  (AC, N=20, q0-grid cap 0.25, replay 100k, 40k eps/ckpt 2k); writes only under
-  `results/_v2_ac/`; refuses non-empty dirs unless `--force-resume`; config JSON
-  per job. `--assemble-eval` = 1,200-ep CRN selection (`selection_lib`) → 10k test
-  for all 11 agents (TWAP·AC·MaxSpeed·DQN·DDQN·IQN-neutral·IQN-CVaR{.3,.5,.7,.9,.95})
-  → `comparison_table.txt` (+cap-frac), `all_results.json`, `is_arrays.pkl`,
-  `alpha_ladder.{txt,tex}`.
-- `evaluation/tables_v2.py` — 3 generators (comparison+cap-frac; 5-seed aggregate
-  txt/tex reusing `aggregate_seeds`; α-ladder reusing `sweep_cvar_alpha`). Old
-  generators untouched.
-- `tests/test_v2_ac_pipeline.py` — 21 checks PASS: smoke through the CLI, table
-  format checks, and **resume-split equivalence** (`0:200`+`200:400` produces a
-  byte-identical checkpoint at ep200 AND ep400 vs a single `0:400` run).
-
-> **Resume mechanism (byte-identical `--episodes a:b`).** `run_v2_ac` persists the
-> FULL training state between segments: agent weights+optimizer+`_step`, the global
-> torch/np RNG, the whole replay buffer (arrays+ptr+size), and the env RNG
-> (`_rng.bit_generator.state`). The fresh segment (a=0) reseeds; a resumed segment
-> restores and does NOT reseed. No in-training eval (keeps the RNG stream clean for
-> resume); checkpoint selection is post-hoc via `selection_lib`. This is the
-> primitive B5 Pipeline-1 uses to split IQN into 2×20k.
-
-Tables produced later in B5: T-AC-1 (per-seed comparison), T-AC-2 (5-seed aggregate),
-T-AC-3 (α-ladder, expect FLAT — Gaussian sanity).
-
 ## Decision log
-- 2026-07-18: **B2 done** (see status block above). Deviations from the file table,
-  all minor: added `--total-episodes` (needed to mark a segment as non-final for the
-  resume save); assemble-eval selection uses `selection_lib` (1,200 CRN) not the
-  in-training eval_history; α-ladder ladder includes α=1.0 as the neutral reference.
-- 2026-07-18: **B1 done** (see status block above). T1 gate proved byte-identical legacy behaviour after fixing a float32→float64 NEP-50 precision regression in `step()`. Masking is single-source (`feasible_action_mask` shared by env + both agent families, verified by T3). Deviations from the file table, all minor: `simulated_env.py` needed no edit (SimConfig inherits the new fields via dataclass inheritance); trainer resume implemented as module-level `save/load_resumable_state` helpers (the Trainer class is not on the pipeline hot path — `run_simulation.train_agent` is); MaxSpeed at cap 0.25/N=20 liquidates in 4 periods then the env terminates on `q≈0` (no trailing zeros).
+- 2026-07-19: **B4 done** (code + logic tests; data built). `data/build_taq_3min.py`
+  BUILT `AAPL_2014_3min_adj.parquet` (32,742 bars/252 days, 7:1 split-adjusted;
+  split continuity +0.22%, bars/day median 130, 0 NaN). `taq_env.py` v2 mode additive
+  (bar_source/bar_minutes, stride 1, q0-grid+mask, continuous TWAP/AC, σ̂ flag; legacy
+  byte-identical). `run_v2_taq.py` staged CLI (folds Jan–Jul/Aug–Sep/Oct–Dec, reuses
+  run_v2_ac.train_segment — made RNG-robust for TAQEnv's RandomState; refuses to train
+  without an OK eta_scale_report). `scripts/eta_scale_check.py` RAN (η=1e-5): impact-only
+  TWAP 0.251 / MaxSpeed 1.255 bps (5×); realized IS 0.96 / 1.73 (drift-dominated per day)
+  → GATE OK. `tests/test_v2_taq_data.py` all green. Reading: η=1e-5 sane — impact real but
+  secondary to price-drift risk (right for a tail study); formal go/no-go at B5.
+- 2026-07-18: **B1–B3 done** (engine refactor + AC study + regime study; all logic-tests
+  green, byte-identical T1 gate). See git log on `feature/design-v2` for the per-batch
+  commits; run phase (B5) still user-triggered.
+- 2026-07-19: feature scaling reviewed — env-level hand normalization exists
+  (`_build_state`), no statistical standardization anywhere (by design). Added: optional
+  fixed `feature_scale` flag to B1 backlog (default identity) + feature-scale diagnostic
+  as Pipeline 2 step A3b. Running standardizers explicitly rejected (reproducibility /
+  Bellman-target drift / regression-gate).
 - 2026-07-18: doc v3 — file-by-file coding tables added per user request (B1: 14 files, B2: 3, B3: 5, B4: 5). Reuse identified: `sweep_cvar_alpha.py` (α-ladder core), `run_selection_appendix.py` (CRN selection core → extract `selection_lib.py`), `scan_jump_calibration.py` (scan pattern), `run_jd_staged.py` (staged CLI + resume pattern).
 - 2026-07-18: keep network 2×64 (no capacity increase); d=128 only as symptom-gated pilot escalation; watch-items C=500 semantics and ε-decay semantics at N=20.
 - 2026-07-18: v1 checkpoints/results stay at original paths (read-only); no file moves — separation is by the `results/_v2_*/` namespace + non-empty-dir guard.
