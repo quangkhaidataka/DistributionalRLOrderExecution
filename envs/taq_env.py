@@ -35,11 +35,23 @@ from envs.base_env import EnvConfig
 
 @dataclass
 class TAQConfig(EnvConfig):
-    """Extends EnvConfig for TAQ data."""
+    """Extends EnvConfig for TAQ data.
+
+    (action_basis / action_fracs / use_rv_feature / rv_window are inherited from
+    EnvConfig — B1 — so the v2 q0-grid + σ̂ feature are available here too.)
+    """
     data_dir    : str   = 'data/processed'
     stock       : str   = 'AAPL'
     year        : int   = 2014
     lob_levels  : int   = 1       # Level 1 only (NBBO)
+
+    # --- Design-v2 B4 (defaults = legacy 1-min bars, N=5, remaining basis) ---
+    # bar_source: parquet filename override; None → legacy '{stock}_{year}.parquet'.
+    #   v2 uses '{stock}_{year}_3min_adj.parquet' (built by data/build_taq_3min.py).
+    # bar_minutes: resolution of the source bars, used to derive the step stride
+    #   so a decision = one bar in v2 (3-min bars, N=20 → stride 1).
+    bar_source  : str   = None
+    bar_minutes : int   = 1
 
     # Execution horizon
     # N=10 periods over T=30 minutes → 3-min steps
@@ -78,12 +90,16 @@ class TAQEnv:
         """
         self.cfg = cfg
 
-        # Load parquet
-        parquet_path = Path(cfg.data_dir) / f'{cfg.stock}_{cfg.year}.parquet'
+        # Load parquet — bar_source (v2, e.g. the 3-min split-adjusted file) or
+        # the legacy 1-min file. Only the source parquet name changes; all the
+        # replay logic below is shared.
+        parquet_name = cfg.bar_source or f'{cfg.stock}_{cfg.year}.parquet'
+        parquet_path = Path(cfg.data_dir) / parquet_name
         if not parquet_path.exists():
             raise FileNotFoundError(
                 f'{parquet_path} not found. '
-                f'Run extract_taq.py on WRDS Cloud first.'
+                f'Run extract_taq.py on WRDS Cloud first '
+                f'(or data/build_taq_3min.py for the v2 3-min file).'
             )
 
         full_df = pd.read_parquet(parquet_path)
@@ -110,9 +126,21 @@ class TAQEnv:
         if self.avg_vol < 1:
             self.avg_vol = 1.0
 
-        # Step stride: how many 1-min rows per decision step
-        # T minutes / N steps = minutes per step
-        self.step_stride = max(1, int(cfg.T / cfg.N))
+        # Action grid / basis (Design-v2 B4). Defaults = legacy 6-level grid,
+        # 'remaining' basis → byte-identical. v2 passes the q0-grid + 'q0' basis.
+        self._fracs  = list(cfg.action_fracs) if cfg.action_fracs is not None \
+                       else list(self.ACTION_FRACS)
+        self._basis  = getattr(cfg, 'action_basis', 'remaining')
+        self._use_rv = getattr(cfg, 'use_rv_feature', False)
+
+        # Step stride: how many source rows per decision step.
+        #   legacy (1-min bars): T/N minutes per step → stride = int(T/N).
+        #   v2 (bar_minutes-resolution bars): stride = round((T/N) / bar_minutes),
+        #   so a decision = one bar when the bars are already at the step size.
+        if cfg.bar_source is None:
+            self.step_stride = max(1, int(cfg.T / cfg.N))           # legacy, unchanged
+        else:
+            self.step_stride = max(1, int(round(cfg.T / cfg.N / cfg.bar_minutes)))
 
         # Precompute valid starting indices
         needed_rows = cfg.N * self.step_stride
@@ -132,9 +160,10 @@ class TAQEnv:
 
         self.n_episodes = len(self.dates)
 
-        # Environment interface
-        self.state_dim = self.STATE_DIM
-        self.n_actions = len(self.ACTION_FRACS)
+        # Environment interface (state_dim/n_actions config-driven; the σ̂ feature
+        # adds one dim when use_rv_feature is on).
+        self.state_dim = self.STATE_DIM + (1 if self._use_rv else 0)
+        self.n_actions = len(self._fracs)
 
         # Episode state
         self._rng = np.random.RandomState(42)
@@ -150,6 +179,14 @@ class TAQEnv:
 
     def seed(self, s: int):
         self._rng = np.random.RandomState(s)
+
+    @property
+    def action_fracs(self) -> np.ndarray:
+        return np.asarray(self._fracs, dtype=np.float64)
+
+    @property
+    def action_basis(self) -> str:
+        return self._basis
 
     def reset(self) -> np.ndarray:
         cfg = self.cfg
@@ -167,15 +204,23 @@ class TAQEnv:
 
         return self._get_state()
 
-    def step(self, action: int) -> Tuple[np.ndarray, float, bool, dict]:
+    def step(self, action) -> Tuple[np.ndarray, float, bool, dict]:
         cfg = self.cfg
-        frac = self.ACTION_FRACS[action]
-
-        # Volume to execute
-        if self._t == cfg.N - 1:
-            x_t = self._q  # force liquidate remaining
+        # `action` is a grid index (learned/discrete agents) or a raw continuous
+        # fraction of q0 (rule-based TWAP/AC executing exact amounts in q0 mode).
+        if isinstance(action, (int, np.integer)):
+            frac = self._fracs[action]
         else:
-            x_t = frac * self._q
+            frac = float(action)
+        terminal = (self._t == cfg.N - 1)
+
+        # Volume to execute. Terminal force-liquidates (cap-exempt, both bases).
+        #   'remaining' (legacy): x_t = frac · q_remaining  (byte-identical).
+        #   'q0'        (v2):     x_t = min(frac · q0, q_remaining)  (oversell clip).
+        if self._basis == 'remaining':
+            x_t = self._q if terminal else frac * self._q
+        else:
+            x_t = self._q if terminal else min(float(frac) * float(cfg.q0), self._q)
         x_t = max(x_t, 0.0)
 
         # Get current market snapshot
@@ -208,7 +253,10 @@ class TAQEnv:
 
         done = (self._t >= cfg.N) or (self._q <= 1e-8)
 
-        info = {}
+        # `at_cap`: traded exactly at the per-step cap on a non-terminal step —
+        # the cap_frac diagnostic (metrics.py). Additive; does not affect IS.
+        at_cap = (not terminal) and bool(np.isclose(float(frac), float(self._fracs[-1])))
+        info = {'x_t': x_t, 'frac': float(frac), 'at_cap': at_cap}
         if done:
             info['implementation_shortfall'] = -sum(self._rewards)
 
@@ -229,5 +277,11 @@ class TAQEnv:
         spread_star = float(row['spread']) / (mid + 1e-8)
         imb = float(row['imbalance'])
 
-        return np.array([t_star, q_star, dp_star, spread_star, imb],
-                        dtype=np.float32)
+        feats = [t_star, q_star, dp_star, spread_star, imb]
+        if self._use_rv:
+            # σ̂_t: normalized 3-min realized vol (clip [0,5]), same shape as the
+            # sim envs' rv feature. Off by default → legacy 5-D state unchanged.
+            vol = float(row['volatility']) if 'volatility' in row else 0.0
+            feats.append(float(np.clip(vol / (cfg.sigma + 1e-8), 0.0, 5.0)))
+
+        return np.array(feats, dtype=np.float32)
