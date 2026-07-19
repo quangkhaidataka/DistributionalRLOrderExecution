@@ -20,7 +20,10 @@ Plus: 200-ep masked smoke-train per learned agent (finite losses) → _smoke/.
 from __future__ import annotations
 
 import os
+import shutil
 import sys
+import tempfile
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -160,6 +163,58 @@ for name, ag in make_agents().items():
         os.remove(os.path.join(SMOKE_DIR, f'smoke_{name}.pt'))
     except OSError:
         pass
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Feature-scale diagnostic (B3b) — structure + scan_summary format check
+# ════════════════════════════════════════════════════════════════════════════
+section('B3b — feature-scale diagnostic (structure + summary-table format)')
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                'experiments'))
+import run_v2_regime_scan as SCAN
+import tempfile
+
+fcfg = cfg(0.004, 0.10)
+fenv = RegimeJumpEnv(fcfg)
+fiqn = IQNAgent(AgentConfig(1.0), fenv.state_dim, fenv.n_actions,
+                device=DEV, seed=3, action_fracs=GRID, action_basis='q0')
+fs = SCAN.collect_feature_scale(fenv, fiqn, n_episodes=25, seed=0)
+# structure: two views, each with per-feature std/min/max of length state_dim
+ok_struct = ('no_trade' in fs and 'policy' in fs
+             and all(len(fs[v][k]) == fenv.state_dim
+                     for v in ('no_trade', 'policy') for k in ('std', 'min', 'max')))
+check('collect_feature_scale: 2 views × per-feature std/min/max', ok_struct,
+      f'keys={list(fs.keys())}')
+nt_std = fs['no_trade']['std']
+check('Δp* std < q* std (price channel suppressed, as expected)',
+      nt_std[2] < nt_std[1],
+      f'Δp*={nt_std[2]:.5f} q*={nt_std[1]:.5f}')
+print(f'      measured no-trade std: t*={nt_std[0]:.4f} q*={nt_std[1]:.4f} '
+      f'Δp*={nt_std[2]:.5f} spread*={nt_std[3]:.4f} imb*={nt_std[4]:.4f} '
+      f'(Δp*/q*={nt_std[2]/nt_std[1]:.5f})')
+
+# scan_summary format check: build one minimal cell, render write_summary.
+agents_m = {n: {'mean_IS_bps': 2.0, 'std_IS_bps': 1.0, 'CVaR_0.95_bps': 10.0,
+                'max_IS_bps': 20.0, 'cap_frac': 0.1}
+            for n in ('TWAP', 'DDQN', 'IQN-neutral')}
+ladder = [{'alpha': a, 'CVaR_0.95_bps': 9.0, 'mean_IS_bps': 2.0, 'gap': 1.0}
+          for a in SCAN.LADDER_ALPHAS]
+fake_cell = {'sigma_high': 0.004, 'p_01': 0.10, 'agents': agents_m, 'ladder': ladder,
+             'criteria': SCAN.score_criteria(agents_m, ladder), 'feature_scale': fs}
+tmpd = Path(tempfile.mkdtemp())
+try:
+    SCAN.write_summary([fake_cell], tmpd, smoke=True)
+    txt = (tmpd / 'scan_summary.txt').read_text()
+finally:
+    shutil.rmtree(tmpd, ignore_errors=True)
+check('scan_summary.txt has the feature-scale table', 'Feature-scale diagnostic' in txt)
+check('scan_summary.txt has the reading aid (price channel suppressed?)',
+      'price channel' in txt and 'suppressed' in txt)
+check('scan_summary.txt shows Δp* + both views',
+      'Δp*' in txt and 'no_trade' in txt and 'policy' in txt)
+check('scan_summary.txt references the action-vs-spread heatmap',
+      'action-vs-spread heatmap' in txt)
 
 
 # ── summary ─────────────────────────────────────────────────────────────────
