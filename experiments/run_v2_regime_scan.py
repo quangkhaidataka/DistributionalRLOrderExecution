@@ -70,6 +70,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # experiments/ siblings
 
+import numpy as np
 import torch
 
 from envs import RegimeJumpEnv, SimConfig
@@ -107,9 +108,19 @@ TWAP_TAIL_LO, TWAP_TAIL_HI = 8.0, 20.0   # (a) TWAP CVaR_0.95 band (bps)
 STD_MIN_BPS                = 0.05        # (b) non-degeneracy floor (bps)
 CAP_FRAC_MAX               = 0.50        # (c) IQN-neutral cap-saturation ceiling
 
-# Budgets
-DEFAULT_SCAN = dict(episodes=5_000, n_eval=2_000, n_eval_train=200, n_eval_ladder=2_000)
-SMOKE_SCAN   = dict(episodes=200,   n_eval=200,   n_eval_train=40,  n_eval_ladder=200)
+# Budgets  (n_feat = episodes for the feature-scale diagnostic, per view)
+DEFAULT_SCAN = dict(episodes=5_000, n_eval=2_000, n_eval_train=200, n_eval_ladder=2_000,
+                    n_feat=1_000)
+SMOKE_SCAN   = dict(episodes=200,   n_eval=200,   n_eval_train=40,  n_eval_ladder=200,
+                    n_feat=100)
+
+# State-vector feature names (order = base_env._build_state).
+FEATURE_NAMES5 = ['t*', 'q*', 'Δp*', 'spread*', 'imb*']
+FEATURE_NAMES6 = FEATURE_NAMES5 + ['σ̂*']
+
+
+def _feature_names(dim: int) -> list:
+    return FEATURE_NAMES6 if dim == 6 else FEATURE_NAMES5
 
 DEFAULT_OUT_ROOT = PROJECT_ROOT / 'results' / '_v2_regime' / '_scan'
 
@@ -191,6 +202,44 @@ def score_criteria(agents_m: dict, ladder: list) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Feature-scale diagnostic (PLAN_V2 Pipeline-2 step A3b)
+# ---------------------------------------------------------------------------
+
+def _roll_states(env, policy, n_episodes: int, seed: int) -> dict:
+    """Collect every state vector over `n_episodes`; return per-feature std/min/max.
+
+    policy=None → no-trade (action 0 each step); else roll the (eval-mode) policy.
+    Env + global RNG reseeded for reproducibility.
+    """
+    env.seed(seed)
+    RS._seed_global_rng(seed)
+    states = []
+    for _ in range(n_episodes):
+        s = env.reset()
+        states.append(np.asarray(s, dtype=np.float64))
+        done = False
+        while not done:
+            a = 0 if policy is None else policy.select_action(s, eval_mode=True)
+            s, _, done, _ = env.step(a)
+            states.append(np.asarray(s, dtype=np.float64))
+    arr = np.stack(states)                                   # (T, D)
+    return {'std': arr.std(axis=0).tolist(),
+            'min': arr.min(axis=0).tolist(),
+            'max': arr.max(axis=0).tolist(),
+            'n_states': int(arr.shape[0])}
+
+
+def collect_feature_scale(env, iqn_agent, n_episodes: int, seed: int) -> dict:
+    """Feature-scale diagnostic: state-vector per-feature std/min/max under two
+    views — (i) no-trade episodes, (ii) the pilot IQN-neutral policy — to see
+    whether the price channel (Δp*) is numerically suppressed vs the O(1)
+    features (t*, q*). Cheap (no gradients); does not lock anything."""
+    return {'n_episodes': int(n_episodes),
+            'no_trade': _roll_states(env, None, n_episodes, seed),
+            'policy':   _roll_states(env, iqn_agent, n_episodes, seed + 1)}
+
+
+# ---------------------------------------------------------------------------
 # One cell
 # ---------------------------------------------------------------------------
 
@@ -242,6 +291,16 @@ def run_cell(sigma_high, p01, budget, seed, device_str, out_root, smoke, idx, to
         print(f'    alpha={alpha:<4} CVaR95={cvar:7.3f}  gap={neutral_cvar - cvar:+.3f}')
     agents['IQN-neutral'].cfg.cvar_alpha = 1.0   # restore (evaluate_at_alpha mutates it)
 
+    # ── Feature-scale diagnostic (no-trade + IQN-neutral policy) ───────────
+    print(f'  feature-scale diagnostic ({budget["n_feat"]} eps × 2 views) ...')
+    feature_scale = collect_feature_scale(eval_env, agents['IQN-neutral'],
+                                          budget['n_feat'], eval_seed + 7)
+    _fn = _feature_names(len(feature_scale['no_trade']['std']))
+    _nt = feature_scale['no_trade']['std']
+    print(f'    no-trade std: ' +
+          ' '.join(f'{n}={s:.4f}' for n, s in zip(_fn, _nt)) +
+          f'  (Δp*/q* = {(_nt[2]/_nt[1] if _nt[1] else float("nan")):.5f})')
+
     crit = score_criteria(agents_m, ladder)
 
     print(f'  TWAP CVaR95={agents_m["TWAP"]["CVaR_0.95_bps"]:.3f} | '
@@ -261,7 +320,7 @@ def run_cell(sigma_high, p01, budget, seed, device_str, out_root, smoke, idx, to
                       'budget': budget, 'sim_config': cfg},
                      out / 'config.json')
     payload = {'sigma_high': sigma_high, 'p_01': p01, 'agents': agents_m,
-               'ladder': ladder, 'criteria': crit}
+               'ladder': ladder, 'criteria': crit, 'feature_scale': feature_scale}
     with open(out / 'metrics.json', 'w') as f:
         json.dump(payload, f, indent=2)
 
@@ -365,6 +424,44 @@ def write_summary(cells, out_root, smoke=False):
     else:
         lines.append('RECOMMENDED: NONE — no cell passed all hard criteria (a,b,c). '
                      'Widen the grid or relax thresholds; all failing cells above.')
+
+    # ── Feature-scale diagnostic (PLAN_V2 Pipeline-2 step A3b) ─────────────
+    dim = next((len(c['feature_scale']['no_trade']['std'])
+                for c in cells if c.get('feature_scale')), None)
+    if dim is not None:
+        names = _feature_names(dim)
+        lines += [
+            '',
+            'Feature-scale diagnostic — state-vector per-feature std over N episodes '
+            '(2 views).',
+            'Reading aid: Δp* std vs other features (t*, q*) — is the price channel '
+            'numerically suppressed?',
+            '(min/max ranges for the recommended cell below; full ranges per cell in '
+            '<cell>/metrics.json.',
+            ' The action-vs-spread heatmap is produced by '
+            'run_v2_regime.py --assemble-eval on the LOCKED cell.)',
+        ]
+        fs_hdr = (f'{"cell(σ_hi,p01)":>14} {"view":>9} | '
+                  + ' '.join(n.rjust(8) for n in names) + f' | {"Δp*/q*":>8}')
+        lines += [fs_hdr, '-' * len(fs_hdr)]
+        for c in cells:
+            fs = c.get('feature_scale')
+            if not fs:
+                continue
+            for view in ('no_trade', 'policy'):
+                stds = fs[view]['std']
+                ratio = (stds[2] / stds[1]) if stds[1] else float('nan')
+                lines.append(
+                    f'{c["sigma_high"]:g},{c["p_01"]:g}'.rjust(14) + f' {view:>9} | '
+                    + ' '.join(f'{s:8.4f}' for s in stds) + f' | {ratio:8.5f}')
+        if rec is not None and rec.get('feature_scale'):
+            lines += ['', f'Recommended cell (σ_hi={rec["sigma_high"]:g}, '
+                          f'p01={rec["p_01"]:g}) per-feature [min, max]:']
+            for view in ('no_trade', 'policy'):
+                v = rec['feature_scale'][view]
+                rng = '  '.join(f'{names[i]} [{v["min"][i]:+.3f}, {v["max"][i]:+.3f}]'
+                                for i in range(len(names)))
+                lines.append(f'  {view:>9}: {rng}')
 
     (out_root / 'scan_summary.txt').write_text('\n'.join(lines) + '\n')
     print('\n' + '\n'.join(lines))

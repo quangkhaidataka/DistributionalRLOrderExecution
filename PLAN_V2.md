@@ -242,6 +242,12 @@ DQN ~14′, DDQN ~15′, IQN ~50′ (split to stay < 30′/job).
 - 2026-07-18: **B1–B3 done** (engine refactor + AC study + regime study; all logic-tests
   green, byte-identical T1 gate). See git log on `feature/design-v2` for the per-batch
   commits; run phase (B5) still user-triggered.
+- 2026-07-19: **B3b done** — feature-scale diagnostic (Pipeline-2 step A3b) implemented
+  in `run_v2_regime_scan.py` (`collect_feature_scale`; per-feature std/min/max over ≥1,000
+  no-trade + IQN-neutral-policy episodes → a table in `scan_summary.txt`). Smoke confirms
+  the backlog concern: **Δp* std ≈ 3–7e-4 vs q*/t* std ≈ 0.21–0.30 (Δp*/q* ≈ 0.001–0.003)
+  → the price channel IS numerically suppressed.** The `feature_scale` FLAG itself stays
+  backlog (decided at the Phase-A STOP). Format check added to `test_v2_regime_env.py`.
 - 2026-07-19: feature scaling reviewed — env-level hand normalization exists
   (`_build_state`), no statistical standardization anywhere (by design). Added: optional
   fixed `feature_scale` flag to B1 backlog (default identity) + feature-scale diagnostic
