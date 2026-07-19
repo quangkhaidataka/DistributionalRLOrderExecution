@@ -108,11 +108,13 @@ TWAP_TAIL_LO, TWAP_TAIL_HI = 8.0, 20.0   # (a) TWAP CVaR_0.95 band (bps)
 STD_MIN_BPS                = 0.05        # (b) non-degeneracy floor (bps)
 CAP_FRAC_MAX               = 0.50        # (c) IQN-neutral cap-saturation ceiling
 
-# Budgets  (n_feat = episodes for the feature-scale diagnostic, per view)
+# Budgets  (n_feat = episodes for the feature-scale diagnostic, per view;
+#           ckpt_freq must divide `episodes` AND `episodes//2` so ep{total} lands
+#           on a checkpoint — the reap-safe staging loads the final ep{total}.pt)
 DEFAULT_SCAN = dict(episodes=5_000, n_eval=2_000, n_eval_train=200, n_eval_ladder=2_000,
-                    n_feat=1_000)
+                    n_feat=1_000, ckpt_freq=2_000)
 SMOKE_SCAN   = dict(episodes=200,   n_eval=200,   n_eval_train=40,  n_eval_ladder=200,
-                    n_feat=100)
+                    n_feat=100, ckpt_freq=100)
 
 # State-vector feature names (order = base_env._build_state).
 FEATURE_NAMES5 = ['t*', 'q*', 'Δp*', 'spread*', 'imb*']
@@ -251,34 +253,59 @@ def _slim(r: dict) -> dict:
             'cap_frac':    float(r['cap_frac'])}
 
 
-def run_cell(sigma_high, p01, budget, seed, device_str, out_root, smoke, idx, total):
+CKPT_FREQ = 2000   # checkpoint every N episodes (reap-safe staging)
+
+
+def _cell_dirs(out_root, sigma_high, p01):
     out = out_root / cell_name(sigma_high, p01)
-    refuse_if_nonempty(out)
-    out.mkdir(parents=True, exist_ok=True)
+    return out, out / 'checkpoints', out / 'logs'
 
-    print(f'\n{"=" * 68}\n  CELL {idx}/{total}: sigma_high={sigma_high} p_01={p01}'
-          f'  (lambda_J={JUMP_INTENSITY}, sigma_J={JUMP_STD}, mu_J={JUMP_MEAN})'
-          f'{"  [SMOKE]" if smoke else ""}\n{"=" * 68}')
 
+def cell_train(sigma_high, p01, name, ep_start, ep_end, total, seed, device_str,
+               out_root, ckpt_freq=CKPT_FREQ):
+    """Staged training of ONE learned agent / IQN segment into the cell's ckpt dir.
+
+    Mirrors run_v2_ac's staged path: `V2.train_segment` checkpoints every
+    CKPT_FREQ and supports byte-identical `--episodes a:b` resume, so a reaped
+    segment re-runs from the last completed segment — the cell is never restarted.
+    Uses FINAL-policy weights (no best-by-val restore), matching the scan design.
+    """
+    out, ckpt_dir, log_dir = _cell_dirs(out_root, sigma_high, p01)
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    log_dir.mkdir(parents=True, exist_ok=True)
     cfg = build_cell_config(sigma_high, p01)
     agents, train_env = build_regime_agents(cfg, seed, device_str)
+    resume_path = log_dir / f'{name}_resume.pt'
+    print(f'  [cell sh{sigma_high} p{p01}] train {name} eps({ep_start}:{ep_end}/{total})')
+    V2.train_segment(agents[name], train_env, name, ep_start, ep_end, total,
+                     seed, ckpt_dir, ckpt_freq, resume_path)
+    # Guarantee the FINAL-policy checkpoint exists (cell_assemble loads ep{total}.pt),
+    # independent of whether total is divisible by ckpt_freq.
+    if ep_end == total:
+        agents[name].save(str(ckpt_dir / f'{name}_ep{total}.pt'))
+
+
+def cell_assemble(sigma_high, p01, budget, seed, device_str, out_root, smoke):
+    """Load the cell's FINAL-policy checkpoints, evaluate, score criteria (a)–(d)
+    + feature-scale, write metrics.json. Eval / α-ladder / criteria / feature-scale
+    logic is UNCHANGED from the original single-process run_cell (results-neutral)."""
+    out, ckpt_dir, log_dir = _cell_dirs(out_root, sigma_high, p01)
+    total = budget['episodes']
+    cfg = build_cell_config(sigma_high, p01)
+    agents, _te = build_regime_agents(cfg, seed, device_str)
     eval_env = RegimeJumpEnv(cfg)
+    for name in LEARNED:                                     # DDQN, IQN-neutral
+        ck = ckpt_dir / f'{name}_ep{total}.pt'
+        if not ck.exists():
+            raise SystemExit(f'Missing final checkpoint {ck}; train {name} first.')
+        agents[name].load(str(ck))
 
-    # ── Train learned agents (final policy — checkpoint_dir=None) ──────────
-    for name in LEARNED:
-        print(f'  training {name} ({budget["episodes"]} episodes) ...')
-        RS.train_agent(agents[name], train_env, budget['episodes'],
-                       eval_env=eval_env, eval_freq=max(budget['episodes'] // 2, 1),
-                       n_eval=budget['n_eval_train'], checkpoint_dir=None, seed=seed)
-
-    # ── Eval TWAP / DDQN / IQN-neutral (alpha=1.0) ─────────────────────────
     eval_seed = seed + 99_999
     all_results, _ = RS.evaluate_all(agents, eval_env, n_eval=budget['n_eval'],
                                      seed=eval_seed)
     agents_m = {r['agent_name']: _slim(r) for r in all_results}
     neutral_cvar = agents_m['IQN-neutral']['CVaR_0.95_bps']
 
-    # ── Eval-only CVaR alpha-ladder on the SAME IQN-neutral weights ────────
     print('  alpha-ladder on IQN-neutral (zero-cost risk control) ...')
     ladder = []
     for alpha in LADDER_ALPHAS:
@@ -289,20 +316,17 @@ def run_cell(sigma_high, p01, budget, seed, device_str, out_root, smoke, idx, to
                        'mean_IS_bps': float(m['mean_IS_bps']),
                        'gap': float(neutral_cvar - cvar)})
         print(f'    alpha={alpha:<4} CVaR95={cvar:7.3f}  gap={neutral_cvar - cvar:+.3f}')
-    agents['IQN-neutral'].cfg.cvar_alpha = 1.0   # restore (evaluate_at_alpha mutates it)
+    agents['IQN-neutral'].cfg.cvar_alpha = 1.0
 
-    # ── Feature-scale diagnostic (no-trade + IQN-neutral policy) ───────────
     print(f'  feature-scale diagnostic ({budget["n_feat"]} eps × 2 views) ...')
     feature_scale = collect_feature_scale(eval_env, agents['IQN-neutral'],
                                           budget['n_feat'], eval_seed + 7)
     _fn = _feature_names(len(feature_scale['no_trade']['std']))
     _nt = feature_scale['no_trade']['std']
-    print(f'    no-trade std: ' +
-          ' '.join(f'{n}={s:.4f}' for n, s in zip(_fn, _nt)) +
+    print('    no-trade std: ' + ' '.join(f'{n}={s:.4f}' for n, s in zip(_fn, _nt)) +
           f'  (Δp*/q* = {(_nt[2]/_nt[1] if _nt[1] else float("nan")):.5f})')
 
     crit = score_criteria(agents_m, ladder)
-
     print(f'  TWAP CVaR95={agents_m["TWAP"]["CVaR_0.95_bps"]:.3f} | '
           f'IQN-neutral: Std={agents_m["IQN-neutral"]["std_IS_bps"]:.3f} '
           f'cap={agents_m["IQN-neutral"]["cap_frac"]:.2f} '
@@ -323,8 +347,22 @@ def run_cell(sigma_high, p01, budget, seed, device_str, out_root, smoke, idx, to
                'ladder': ladder, 'criteria': crit, 'feature_scale': feature_scale}
     with open(out / 'metrics.json', 'w') as f:
         json.dump(payload, f, indent=2)
-
     return payload
+
+
+def run_cell(sigma_high, p01, budget, seed, device_str, out_root, smoke, idx, total_cells):
+    """Whole cell in one process (train all segments + assemble). Used for --smoke
+    / single-process runs; the reap-safe path is the per-`--stage` phases."""
+    print(f'\n{"=" * 68}\n  CELL {idx}/{total_cells}: sigma_high={sigma_high} p_01={p01}'
+          f'  (lambda_J={JUMP_INTENSITY}, sigma_J={JUMP_STD}, mu_J={JUMP_MEAN})'
+          f'{"  [SMOKE]" if smoke else ""}\n{"=" * 68}')
+    total = budget['episodes']
+    half = total // 2
+    cf = budget['ckpt_freq']
+    cell_train(sigma_high, p01, 'DDQN', 0, total, total, seed, device_str, out_root, cf)
+    cell_train(sigma_high, p01, 'IQN-neutral', 0, half, total, seed, device_str, out_root, cf)
+    cell_train(sigma_high, p01, 'IQN-neutral', half, total, total, seed, device_str, out_root, cf)
+    return cell_assemble(sigma_high, p01, budget, seed, device_str, out_root, smoke)
 
 
 # ---------------------------------------------------------------------------
@@ -517,6 +555,12 @@ def main():
                     help='Tiny config (200 eps, eval 200) — logic test only, NO full run.')
     ap.add_argument('--out-root', default=None,
                     help='Output root (default results/_v2_regime/_scan).')
+    ap.add_argument('--stage', choices=['ddqn', 'iqn_a', 'iqn_b', 'assemble'],
+                    default=None,
+                    help='(with --cell) run ONE reap-safe staged phase: ddqn (0:N), '
+                         'iqn_a (0:N/2), iqn_b (N/2:N), assemble. Each phase is a '
+                         'short job that survives the ~34-min background reap; '
+                         're-run a phase to resume — the cell is never restarted.')
     args = ap.parse_args()
 
     out_root = Path(args.out_root) if args.out_root else DEFAULT_OUT_ROOT
@@ -539,6 +583,24 @@ def main():
 
     if args.cell is not None:
         sigma_high, p01 = args.cell
+        if args.stage is not None:
+            total = budget['episodes']
+            half = total // 2
+            cf = budget['ckpt_freq']
+            if args.stage == 'ddqn':
+                cell_train(sigma_high, p01, 'DDQN', 0, total, total,
+                           args.seed, args.device, out_root, cf)
+            elif args.stage == 'iqn_a':
+                cell_train(sigma_high, p01, 'IQN-neutral', 0, half, total,
+                           args.seed, args.device, out_root, cf)
+            elif args.stage == 'iqn_b':
+                cell_train(sigma_high, p01, 'IQN-neutral', half, total, total,
+                           args.seed, args.device, out_root, cf)
+            elif args.stage == 'assemble':
+                cell_assemble(sigma_high, p01, budget, args.seed, args.device,
+                              out_root, args.smoke)
+            print(f'\nCell (sh={sigma_high}, p={p01}) stage {args.stage} done.')
+            return
         run_cell(sigma_high, p01, budget, args.seed, args.device, out_root,
                  args.smoke, 1, 1)
         print(f'\nCell (sigma_high={sigma_high}, p_01={p01}) done. '
