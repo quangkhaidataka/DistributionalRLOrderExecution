@@ -2,11 +2,11 @@
 
 > Living status doc for the DisRL thesis work. **Update this whenever meaningful progress is made** (task finished, batch run, blocker hit). Newest state at the top of each section. Dates are absolute. Companion: **DECISION.md** (why), **PLAN.md** (the plan), **RUNBOOK.md** (run commands), **VERIFY.md** (checks), **PAPER_FIXES.md** (paper audit).
 
-**Last updated:** 2026-07-18
+**Last updated:** 2026-07-19
 **Active branch:** `fix/unify-arch-jd-recalibration` (off `main`) · **Design-v2 work on `feature/design-v2`**
 **Repo:** `/Users/user/Desktop/DisRL` · conda env `finrl_env` (py3.11, torch 2.2.2, numpy 2.4.6) · MPS available.
 
-> **Design-v2 (branch `feature/design-v2`, gov. doc `PLAN_V2.md`):** **B1 (global engine refactor) is COMPLETE and gated** (2026-07-18) — q0 action basis, single-source feasible-action masking, MaxSpeed, N-agnostic continuous TWAP/AC, σ̂ feature toggle, dynamic state_dim; new `scripts/regression_gate.py` (T1) reproduces the locked JD numbers **exactly**, `tests/test_v2_env.py`/`test_v2_smoke.py` green, legacy suite unchanged. B2–B5 (AC / regime / TAQ studies) are CODE-ONLY until the user triggers a run. The v1 locked results below are frozen at tag `locked-main-results`.
+> **Design-v2 (branch `feature/design-v2`, gov. doc `PLAN_V2.md`):** B1–B4 code COMPLETE + logic-tested (see PLAN_V2 decision log). **B5 Pipeline-1 (AC study) RUN & COMPLETE (2026-07-19)** — 5 seeds {42,123,7,2024,31} × (DQN, DDQN, IQN-neutral 2×20k) trained N=20 at CPU, per-seed 1,200-CRN selection → 10k test (11 rows). Tables in `results/_v2_ac/` (T-AC-1 per-seed, T-AC-2 `_aggregate/ac_seed_summary.{txt,tex}`, T-AC-3 α-ladder). **Verdict: all pre-registered AC-sanity expectations HELD** — all agents ≈ equal (learned mean 1.73–1.84, CVaR₉₅ 2.43–2.48 bps, overlapping within seed-std), α-ladder FLAT (Mean/CVaR₉₅ vary < across-seed std over α∈{.3,.5,.7,.9,.95,1}), cap-frac ≈ 0 for all except MaxSpeed (=1.0); TWAP≡AC. AC confirms the Gaussian null (no CVaR benefit) — the intended sanity check. Ops note: harness reaps background jobs on a ~34-min window, so each seed ran as staged sub-jobs (DQN/DDQN, IQN 0:20k, IQN 20k:40k, assemble) via an idempotent driver; the proven `--episodes a:b` resume made reaps free to re-run. B2/B3/B4 run phases (regime, TAQ) still user-triggered. v1 locked results frozen at tag `locked-main-results`.
 
 ---
 
