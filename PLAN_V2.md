@@ -229,6 +229,17 @@ DQN ~14′, DDQN ~15′, IQN ~50′ (split to stay < 30′/job).
 ---
 
 ## Decision log
+- 2026-07-20 (**supersedes the σ̂-ENABLED decision below — cell lock still stands**):
+  **σ̂ REVERSED → the main study is σ̂-OFF (5-D state; param guard IQN 11787 /
+  DQN·DDQN 5515).** The σ̂-on confirmation pilot (calibration round 2/2, seed 42;
+  preserved at `results/_v2_regime/_ablation_sigma_on/logs/`) cut CVaR₉₅ 7.90→5.42 bps
+  **only via a faster near-constant liquidation** (~0.2·q0/step, front-loads in ~5 steps;
+  mean IS *worsened* 1.93→2.65) that ignored both spread and σ̂ per-step (both heatmaps
+  flat, mean-action range 0.0000) and — decisively — **NEUTRALIZED the CVaR-α distortion**
+  (α-ladder gaps → 0.000 vs σ̂-off's +0.5…+1.2). Enabling σ̂ erases the distributional
+  headline, so σ̂-on is **demoted to the ablation appendix (arm E)**; the σ̂-off scan is
+  the "off" arm. `feature_scale` stays OFF (unchanged). Phase B (Pipeline-2 step 5) runs
+  RegimeJumpEnv on the σ̂-OFF locked cell, 5 seeds. Cell (0.002, 0.05) lock unchanged.
 - 2026-07-20: **Regime cell LOCKED (Phase-A decision): σ_high=0.002, p₀₁=0.05**
   (`results/_v2_regime/locked_cell.json`). Rationale: all 4 scan cells pass hard
   criteria (a) TWAP CVaR₉₅∈[8,20], (b) Std IS>0.05, (c) cap<0.5; the differentiator
