@@ -229,6 +229,17 @@ DQN ~14′, DDQN ~15′, IQN ~50′ (split to stay < 30′/job).
 ---
 
 ## Decision log
+- 2026-07-20: **Pipeline-3 (TAQ AAPL 2014) RUN & COMPLETE (σ̂-off, seed 42).** Walk-forward
+  train Jan–Jul / val Aug–Sep / test Oct–Dec; q0=5000, η=1e-5 (gate OK), N=20 3-min bars,
+  50k eps; 1,200-CRN min-val-CVaR₉₅ selection (DQN ep18k / DDQN ep14k / IQN ep20k) → 10k test.
+  Results (`results/_v2_taq/AAPL/logs/`): (1) IQN-neutral CVaR₉₅ 25.77 < DDQN 26.82 < DQN 30.14
+  (−56% vs TWAP 58.54) — but IQN wins by **dumping** (cap 0.996), ties MaxSpeed 25.85; scalar
+  agents lose by under-dumping; IQN Max (203) > DQN/DDQN (172/181). (2) undistorted IQN already
+  gets the full cut. (3) **α-ladder INERT (3rd env)** — gaps |·|<0.05 bps, consistent w/ AC +
+  Regime. Adaptation = open-loop dump-at-cap (no spread modulation). Reading: on real AAPL the
+  cap-constrained tail-optimal policy is fast liquidation (drift ≫ 5× impact); echoes v1 Batch-E
+  (TAQ=IL). **All 3 v2 pipelines done; next = paper surgery, not more runs.** d=128 NOT triggered
+  (IQN not underfit — it wins the tail; flat ladder reflects a state-unpredictable tail, not capacity).
 - 2026-07-20 (**supersedes the σ̂-ENABLED decision below — cell lock still stands**):
   **σ̂ REVERSED → the main study is σ̂-OFF (5-D state; param guard IQN 11787 /
   DQN·DDQN 5515).** The σ̂-on confirmation pilot (calibration round 2/2, seed 42;

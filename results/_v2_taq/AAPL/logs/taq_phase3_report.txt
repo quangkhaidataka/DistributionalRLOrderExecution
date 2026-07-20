@@ -1,0 +1,62 @@
+########################################################################
+  T-TAQ — Pipeline 3 (real data, AAPL 2014), σ̂-off, seed 42
+  folds: train Jan-Jul (146d) / val Aug-Sep (42d) / test Oct-Dec (64d)
+  q0=5000, η=1e-5 (gate OK, impact 5×), a=1e-4, N=20 3-min bars, 50k eps
+  selection: min val-CVaR95 on 1200-CRN | DQN ep18000 / DDQN ep14000 / IQN ep20000
+########################################################################
+
+===== T-TAQ-1 — main comparison (10k test eps) =====
+v2-TAQ comparison (AAPL, seed 42, 10000 test eps)
+Agent            |     Mean |      Std |   CVaR90 |   CVaR95 |      Max | cap-frac
+----------------------------------------------------------------------------------
+TWAP             |   0.5513 |  24.2394 |  45.0325 |  58.5434 | 239.1494 |    0.000
+AC               |   0.5513 |  24.2388 |  45.0315 |  58.5421 | 239.1454 |    0.000
+MaxSpeed         |   1.4619 |  10.3477 |  20.0301 |  25.8481 | 209.4404 |    1.000
+DQN              |   1.4057 |  11.8613 |  23.0255 |  30.1445 | 171.5901 |    0.519
+DDQN             |   1.2944 |  10.7439 |  20.4026 |  26.8237 | 180.5357 |    0.193
+IQN-neutral      |   1.4590 |  10.2836 |  19.9927 |  25.7736 | 203.2290 |    0.996
+IQN-CVaR_0.30    |   1.4591 |  10.3052 |  20.0027 |  25.7934 | 204.6632 |    0.998
+IQN-CVaR_0.50    |   1.4600 |  10.3356 |  20.0096 |  25.8072 | 222.5047 |    0.997
+IQN-CVaR_0.70    |   1.4562 |  10.2640 |  19.9729 |  25.7342 | 203.2290 |    0.997
+IQN-CVaR_0.90    |   1.4598 |  10.3193 |  20.0034 |  25.7949 | 211.0466 |    0.996
+IQN-CVaR_0.95    |   1.4593 |  10.3071 |  20.0025 |  25.7930 | 222.5047 |    0.996
+
+===== T-TAQ-2 — CVaR-α ladder (IQN-neutral) =====
+CVaR-alpha ladder; all IS metrics in bps.
+alpha |     Mean |      Std |   CVaR90 |   CVaR95 |      Max
+------------------------------------------------------------
+0.3   |   1.4579 |  10.2817 |  19.9906 |  25.7694 | 199.0338
+0.5   |   1.4599 |  10.3368 |  20.0104 |  25.8087 | 222.5047
+0.7   |   1.4550 |  10.2663 |  19.9611 |  25.7105 | 204.2927
+0.9   |   1.4590 |  10.2985 |  19.9971 |  25.7822 | 204.2927
+0.95  |   1.4548 |  10.2296 |  19.9573 |  25.7030 | 210.8629
+1     |   1.4516 |  10.1914 |  19.9256 |  25.6399 | 200.1895
+
+===== claim numbers + adaptation heatmap =====
+  TAQ report extras (seed 42, test Oct-Dec, 10k eps)
+======================================================================
+selected IQN-neutral ckpt: IQN-neutral_ep20000.pt   cap_frac=0.996
+action fractions: [0.0, 0.025, 0.05, 0.075, 0.1, 0.125, 0.15, 0.175, 0.2, 0.225, 0.25]
+mean traded fraction per spread bin: [0.25, 0.25, 0.25, 0.25, 0.25, 0.0, 0.0, 0.0, 0.0, 0.25]
+ADAPTATION range across spread bins = 0.2500  (≈0 ⇒ open-loop / dumps regardless of spread)
+
+ IQN-neutral: CVaR90=19.993  CVaR95=25.774  Max=203.229  cap=0.996  | vs TWAP CVaR95 +56.0%
+        DDQN: CVaR90=20.403  CVaR95=26.824  Max=180.536  cap=0.193  | vs TWAP CVaR95 +54.2%
+         DQN: CVaR90=23.026  CVaR95=30.144  Max=171.590  cap=0.519  | vs TWAP CVaR95 +48.5%
+    MaxSpeed: CVaR90=20.030  CVaR95=25.848  Max=209.440  cap=1.000  | vs TWAP CVaR95 +55.8%
+
+CLAIM (1) IQN-neutral < DQN & < DDQN on tail:
+  CVaR95: IQN 25.774  DQN 30.144  DDQN 26.824  -> IQN<DQN:True  IQN<DDQN:True
+  CVaR90: IQN 19.993  DQN 23.026  DDQN 20.403
+  Max:    IQN 203.229  DQN 171.590  DDQN 180.536
+  IQN vs MaxSpeed CVaR95: 25.774 vs 25.848  (diff -0.074)
+
+CLAIM (3) α-ladder gaps  gap(α)=CVaR95(neutral)-CVaR95(IQN-CVaR_α), CRN comparison:
+  α=0.3: -0.0199
+  α=0.5: -0.0336
+  α=0.7: +0.0394
+  α=0.9: -0.0213
+  α=0.95: -0.0194
+  -> all |gap| < 0.05 bps on 25.77 base ⇒ INERT (consistent w/ AC + Regime)
+
+heatmap -> action_spread_heatmap.csv, action_spread_heatmap.png
