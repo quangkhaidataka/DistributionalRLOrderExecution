@@ -1,0 +1,22 @@
+\begin{table}[H]
+    \centering
+    \caption{v2-Regime stress-hit vs calm breakdown (seed 31).}
+    \label{tab:v2_regime_breakdown}
+    \begin{tabular}{@{}lrrrrr@{}}
+        \toprule
+        Agent & hit-frac & stress Mean & stress CVaR95 & calm Mean & calm CVaR95 \\
+        \midrule
+        TWAP & 0.659 & 1.6319 & 15.9874 & 1.6005 & 2.0442 \\
+        AC & 0.659 & 1.6319 & 15.9857 & 1.6005 & 2.0442 \\
+        MaxSpeed & 0.242 & 2.9975 & 10.7611 & 3.0209 & 3.1868 \\
+        DQN & 0.564 & 2.4387 & 8.6227 & 2.4056 & 2.6056 \\
+        DDQN & 0.241 & 2.9972 & 10.6638 & 3.0205 & 3.1864 \\
+        IQN-neutral & 0.348 & 2.7152 & 9.1183 & 2.7278 & 2.9119 \\
+        IQN-CVaR\_0.30 & 0.346 & 2.6807 & 11.3520 & 2.6667 & 2.8889 \\
+        IQN-CVaR\_0.50 & 0.311 & 2.6221 & 9.5231 & 2.6926 & 2.8881 \\
+        IQN-CVaR\_0.70 & 0.332 & 2.6569 & 8.2596 & 2.7162 & 2.8962 \\
+        IQN-CVaR\_0.90 & 0.340 & 2.7124 & 9.3747 & 2.7292 & 2.9104 \\
+        IQN-CVaR\_0.95 & 0.345 & 2.7705 & 9.6638 & 2.7278 & 2.9113 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
