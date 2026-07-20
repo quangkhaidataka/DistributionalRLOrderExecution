@@ -225,8 +225,13 @@ def write_or_check_manifest(log_dir: Path, payload: dict) -> dict:
 
 
 def _resolve_out(args) -> Path:
+    # Per-seed namespacing: results/_v2_taq/<STOCK>/seed<S>/ (mirrors run_v2_ac /
+    # run_v2_regime). The shared, data-level η-scale gate report lives ABOVE this
+    # (results/_v2_taq/eta_scale_report.json) and is reused across seeds. An
+    # explicit --out-dir still overrides to that exact path (unchanged).
     out = Path(args.out_dir) if args.out_dir else (
-        Path(DEFAULT_OUT_ROOT) / ('_smoke' if args.smoke else '') / STOCK)
+        Path(DEFAULT_OUT_ROOT) / ('_smoke' if args.smoke else '') / STOCK
+        / f'seed{args.seed}')
     if not out.is_absolute():
         out = PROJECT_ROOT / out
     return out
