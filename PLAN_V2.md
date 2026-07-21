@@ -229,6 +229,18 @@ DQN ~14′, DDQN ~15′, IQN ~50′ (split to stay < 30′/job).
 ---
 
 ## Decision log
+- 2026-07-21: **Pipeline-3 (TAQ) extended to 5 SEEDS {42,123,7,2024,31}.** run_v2_taq.py
+  seed-namespaced → `results/_v2_taq/AAPL/seed{S}/` (seed-42 migrated, byte-identical);
+  aggregate in `_aggregate/taq_{seed_summary,multiseed_report}`. Headline = 5-seed mean±std
+  (NOT best seed; seed-42 = pre-registered detail). Results: (1) IQN-neutral CVaR₉₅
+  26.24±1.04 < DDQN 26.81±0.77 < DQN 34.23±6.04, CVaR₉₀ 19.88 (best of all), −54% vs TWAP;
+  vs MaxSpeed wins CVaR₉₀ but ties CVaR₉₅ (+0.16). (2) neutral captures the cut (best α
+  +0.47 bps = 1.8%, within noise). (3) α-ladder gaps +0.22…+0.47 bps but all <2σ,
+  non-monotone, sign-flip at full-dump seed 42 + seed 31 → **no systematic tail control**
+  (consistent w/ AC + Regime; point estimate mildly +ve on TAQ but not dependable).
+  **Reproducibility caveat (honest):** IQN std ≪ DQN but NOT < DDQN (1.04 vs 0.77) — on real
+  data DDQN/MaxSpeed are more seed-stable than IQN (opposite of Regime); IQN spread driven by
+  seed-varying cap-frac (0.12–0.996). All 3 v2 pipelines done → paper surgery. No cherry-pick.
 - 2026-07-20: **Pipeline-3 (TAQ AAPL 2014) RUN & COMPLETE (σ̂-off, seed 42).** Walk-forward
   train Jan–Jul / val Aug–Sep / test Oct–Dec; q0=5000, η=1e-5 (gate OK), N=20 3-min bars,
   50k eps; 1,200-CRN min-val-CVaR₉₅ selection (DQN ep18k / DDQN ep14k / IQN ep20k) → 10k test.
