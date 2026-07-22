@@ -99,12 +99,31 @@ def load_locked_cell() -> dict:
     return cell
 
 
-def build_regime_config(cell: dict) -> SimConfig:
+# Base jump params (the locked-cell / main-study values); the robustness sweep
+# overrides ONE of these at a time via CLI. Defaults keep behaviour byte-identical.
+BASE_JUMP_STD       = REGIME_BASE_CONFIG['jump_std']        # 0.16
+BASE_JUMP_INTENSITY = REGIME_BASE_CONFIG['jump_intensity']  # 0.10
+
+
+def build_regime_config(cell: dict, jump_std: float = None,
+                        jump_intensity: float = None) -> SimConfig:
     cfg = dict(REGIME_BASE_CONFIG)
     cfg['sigma_high']     = float(cell['sigma_high'])
     cfg['p_01']           = float(cell['p_01'])
     cfg['use_rv_feature'] = bool(cell.get('use_rv_feature', False))
+    if jump_std is not None:
+        cfg['jump_std'] = float(jump_std)
+    if jump_intensity is not None:
+        cfg['jump_intensity'] = float(jump_intensity)
     return SimConfig(**cfg)
+
+
+def _effective_jumps(args):
+    """Resolve the effective (jump_std, jump_intensity) for this invocation."""
+    js = args.jump_std if getattr(args, 'jump_std', None) is not None else BASE_JUMP_STD
+    ji = (args.jump_intensity if getattr(args, 'jump_intensity', None) is not None
+          else BASE_JUMP_INTENSITY)
+    return float(js), float(ji)
 
 
 def build_regime_agents(sim_config: SimConfig, seed: int, device_str: str):
@@ -168,8 +187,17 @@ def write_or_check_manifest(log_dir: Path, payload: dict) -> dict:
 
 
 def _resolve_out(args) -> Path:
-    out = Path(args.out_dir) if args.out_dir else (
-        Path(DEFAULT_OUT_ROOT) / ('_smoke' if args.smoke else '') / f'seed{args.seed}')
+    if args.out_dir:
+        out = Path(args.out_dir)
+    else:
+        base = Path(DEFAULT_OUT_ROOT) / ('_smoke' if args.smoke else '')
+        js, ji = _effective_jumps(args)
+        if (js, ji) != (BASE_JUMP_STD, BASE_JUMP_INTENSITY):
+            # jump-robustness sweep: namespace by the swept params so the locked-cell
+            # (base-jump) results at seed{S}/ are never touched.
+            out = base / '_robustness' / f'sJ{js:g}_lJ{ji:g}' / f'seed{args.seed}'
+        else:
+            out = base / f'seed{args.seed}'
     if not out.is_absolute():
         out = PROJECT_ROOT / out
     return out
@@ -182,7 +210,12 @@ def _resolve_out(args) -> Path:
 def cmd_only_agent(args):
     name = args.only_agent
     cell = load_locked_cell()
-    sim_config = build_regime_config(cell)
+    js, ji = _effective_jumps(args)
+    sim_config = build_regime_config(cell, jump_std=js, jump_intensity=ji)
+    swept = (js, ji) != (BASE_JUMP_STD, BASE_JUMP_INTENSITY)
+    print(f'  [jumps] jump_std={js:g} jump_intensity={ji:g} '
+          f'{"(ROBUSTNESS SWEEP)" if swept else "(base/locked)"} | param guard: '
+          f'state_dim=5 n_actions=11 -> IQN 11787 / DQN·DDQN 5515')
     tr = SMOKE_TRAIN if args.smoke else DEFAULT_TRAIN
     ckpt_freq = args.checkpoint_freq or tr['checkpoint_freq']
     ep_start, ep_end = (AC._parse_episodes(args.episodes) if args.episodes is not None
@@ -360,6 +393,12 @@ def main():
     ap.add_argument('--device', choices=['cpu', 'mps'], default='cpu')
     ap.add_argument('--smoke', action='store_true')
     ap.add_argument('--force-resume', action='store_true')
+    ap.add_argument('--jump-std', type=float, default=None,
+                    help='override jump_std (default = locked/base 0.16); '
+                         'non-default routes output to _robustness/')
+    ap.add_argument('--jump-intensity', type=float, default=None,
+                    help='override jump_intensity (default = locked/base 0.10); '
+                         'non-default routes output to _robustness/')
     args = ap.parse_args()
 
     if args.only_agent:
