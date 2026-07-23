@@ -229,6 +229,17 @@ DQN ~14′, DDQN ~15′, IQN ~50′ (split to stay < 30′/job).
 ---
 
 ## Decision log
+- 2026-07-23: **Regime jump-robustness sweep DONE.** Additive `--jump-std/--jump-intensity`
+  on run_v2_regime.py (defaults byte-identical; overrides route to `_robustness/sJ_lJ/seed/`).
+  3 points × 3 seeds {42,123,7}, locked cell except the swept jump param: A(σ_J=0.08,λ=0.10),
+  B(σ_J=0.32,λ=0.10), C(σ_J=0.16,λ=0.05). Design = does IQN's tail edge over DQN/DDQN survive
+  jump changes. **Win-count over 14 point×seed cells (BASE 5 + A/B/C 3):** IQN<DQN 11/14 on
+  CVaR90 & 11/14 on CVaR95 (p=0.029) — ROBUST; IQN<DDQN 11/14 CVaR90 (p=0.029) but 8/14 CVaR95
+  (p=0.395, ≈chance) — DDQN edge is upper-tail-only / cell-specific on the deep tail. No
+  dump-collapse (Std>0.05, cap<1 all learned). MaxSpeed competitive-to-best at every point.
+  Validity flags: A TWAP CVaR95 7.1 (<8, mild), B 23.6 (>20, harsh) — deliberate stress
+  cases, not calibration cells. Tables in `_robustness/_aggregate/robustness_summary.{txt,tex}`.
+  All v2 empirics now complete (3 pipelines + sweep) → paper surgery.
 - 2026-07-21: **Pipeline-3 (TAQ) extended to 5 SEEDS {42,123,7,2024,31}.** run_v2_taq.py
   seed-namespaced → `results/_v2_taq/AAPL/seed{S}/` (seed-42 migrated, byte-identical);
   aggregate in `_aggregate/taq_{seed_summary,multiseed_report}`. Headline = 5-seed mean±std
