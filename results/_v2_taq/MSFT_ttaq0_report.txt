@@ -1,0 +1,15 @@
+  NOTE: MSFT_2014_3min_adj.parquet exists — overwriting the DERIVED 3-min parquet (source MSFT_2014.parquet is never touched).
+  wrote /Users/user/Desktop/DisRL/data/processed/MSFT_2014_3min_adj.parquet  (32,652 bars)
+==========================================================================
+  TAQ 3-min build — T-TAQ-0 validation report (MSFT 2014)
+==========================================================================
+  bars total       : 32,652   trading days: 252
+  split handling   : no split detected (no >20% daily gap)
+  split continuity : n/a (no split)
+  bars/day         : median 130  [min 93, max 131]  (full 6.5h day -> ~130)
+  NaN scan         : {'mid_price': 0, 'spread': 0, 'imbalance': 0, 'best_bid': 0, 'best_ask': 0, 'ret': 0, 'volatility': 0}  (clean)
+  monotone ts/day  : all monotone
+  intraday range   : 0 days 09:30:00 .. 0 days 16:00:00  (within a single session)
+  mid_price        : mean $42.42  [34.84, 49.98]  (no split)
+  adj spread(bps)  : mean 2.43  median 2.39
+==========================================================================

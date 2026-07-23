@@ -1,0 +1,16 @@
+  NOTE: GOOG_2014_3min_adj.parquet exists — overwriting the DERIVED 3-min parquet (source GOOG_2014.parquet is never touched).
+  wrote /Users/user/Desktop/DisRL/data/processed/GOOG_2014_3min_adj.parquet  (32,655 bars)
+==========================================================================
+  TAQ 3-min build — T-TAQ-0 validation report (GOOG 2014)
+==========================================================================
+  bars total       : 32,655   trading days: 252
+  split handling   : data-driven split 2014-04-03, MEASURED ratio 2.000 (≈2:1, within 5%); using measured 2.000
+  split continuity : 2014-04-02 adj close $567.70 -> 2014-04-03 open $567.70  (overnight gap +0.00%)
+  bars/day         : median 130  [min 83, max 131]  (full 6.5h day -> ~130)
+  NaN scan         : {'mid_price': 0, 'spread': 0, 'imbalance': 0, 'best_bid': 0, 'best_ask': 0, 'ret': 0, 'volatility': 0}  (clean)
+  monotone ts/day  : all monotone
+  intraday range   : 0 days 09:30:00 .. 0 days 16:00:00  (within a single session)
+  adj mid_price    : pre-split  mean $584.59  [542.51, 614.30]
+                     post-split mean $558.38  [496.81, 608.40]
+  adj spread(bps)  : mean 4.59  median 4.34
+==========================================================================

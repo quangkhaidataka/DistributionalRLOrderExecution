@@ -1,0 +1,137 @@
+{
+  "ticker": "GOOG",
+  "eta": 1e-05,
+  "q0": 5000,
+  "a": 0.0001,
+  "n_days": 15,
+  "per_day": [
+    {
+      "date": "2014-10-01",
+      "twap_bps": 5.758094556046624,
+      "maxspeed_bps": 2.2091884329266613,
+      "twap_impact_bps": 0.043364909005093544,
+      "maxspeed_impact_bps": 0.2168245450254677,
+      "n_starts": 110
+    },
+    {
+      "date": "2014-10-02",
+      "twap_bps": 1.0483997612046583,
+      "maxspeed_bps": 1.4888559526843392,
+      "twap_impact_bps": 0.04350388668863074,
+      "maxspeed_impact_bps": 0.21751943344315372,
+      "n_starts": 110
+    },
+    {
+      "date": "2014-10-03",
+      "twap_bps": -2.7517373953851356,
+      "maxspeed_bps": -0.5092391799711576,
+      "twap_impact_bps": 0.04303264436336755,
+      "maxspeed_impact_bps": 0.2151632218168378,
+      "n_starts": 110
+    },
+    {
+      "date": "2014-10-06",
+      "twap_bps": 5.157394664474734,
+      "maxspeed_bps": 0.16891531442447416,
+      "twap_impact_bps": 0.04289704708719751,
+      "maxspeed_impact_bps": 0.2144852354359875,
+      "n_starts": 110
+    },
+    {
+      "date": "2014-10-07",
+      "twap_bps": 3.561858732008018,
+      "maxspeed_bps": -0.7053250980614328,
+      "twap_impact_bps": 0.04346889522412206,
+      "maxspeed_impact_bps": 0.21734447612061028,
+      "n_starts": 110
+    },
+    {
+      "date": "2014-10-08",
+      "twap_bps": -11.437155901683527,
+      "maxspeed_bps": -0.6625150472971679,
+      "twap_impact_bps": 0.04391813672621724,
+      "maxspeed_impact_bps": 0.2195906836310862,
+      "n_starts": 110
+    },
+    {
+      "date": "2014-10-09",
+      "twap_bps": 11.481521985683504,
+      "maxspeed_bps": 2.8675022646791675,
+      "twap_impact_bps": 0.04392542386172298,
+      "maxspeed_impact_bps": 0.2196271193086149,
+      "n_starts": 110
+    },
+    {
+      "date": "2014-10-10",
+      "twap_bps": 22.08079684155417,
+      "maxspeed_bps": 2.375276940926123,
+      "twap_impact_bps": 0.0445659373036425,
+      "maxspeed_impact_bps": 0.22282968651821242,
+      "n_starts": 110
+    },
+    {
+      "date": "2014-10-13",
+      "twap_bps": 6.3580043581614305,
+      "maxspeed_bps": 2.3224400693711065,
+      "twap_impact_bps": 0.04561352766517541,
+      "maxspeed_impact_bps": 0.2280676383258771,
+      "n_starts": 110
+    },
+    {
+      "date": "2014-10-14",
+      "twap_bps": 3.911600348908365,
+      "maxspeed_bps": -0.292991937758755,
+      "twap_impact_bps": 0.04571722469539495,
+      "maxspeed_impact_bps": 0.22858612347697474,
+      "n_starts": 110
+    },
+    {
+      "date": "2014-10-15",
+      "twap_bps": -0.5529375640474021,
+      "maxspeed_bps": -0.19226930745979845,
+      "twap_impact_bps": 0.047129538200817896,
+      "maxspeed_impact_bps": 0.23564769100408947,
+      "n_starts": 110
+    },
+    {
+      "date": "2014-10-16",
+      "twap_bps": -12.999513751526745,
+      "maxspeed_bps": -3.713469855836816,
+      "twap_impact_bps": 0.047268662828680245,
+      "maxspeed_impact_bps": 0.23634331414340126,
+      "n_starts": 110
+    },
+    {
+      "date": "2014-10-17",
+      "twap_bps": 22.081261938408126,
+      "maxspeed_bps": 3.8920160268264867,
+      "twap_impact_bps": 0.04777814769285758,
+      "maxspeed_impact_bps": 0.2388907384642878,
+      "n_starts": 110
+    },
+    {
+      "date": "2014-10-20",
+      "twap_bps": -9.875807305812371,
+      "maxspeed_bps": -0.26749782579025005,
+      "twap_impact_bps": 0.04796366071338338,
+      "maxspeed_impact_bps": 0.23981830356691686,
+      "n_starts": 110
+    },
+    {
+      "date": "2014-10-21",
+      "twap_bps": -4.045542182420112,
+      "maxspeed_bps": -0.10686199763285494,
+      "twap_impact_bps": 0.047336962555560254,
+      "maxspeed_impact_bps": 0.23668481277780132,
+      "n_starts": 110
+    }
+  ],
+  "twap_mean_bps": 2.6517492723716227,
+  "maxspeed_mean_bps": 0.5916016501353416,
+  "twap_impact_bps": 0.0451656403074576,
+  "maxspeed_impact_bps": 0.22582820153728797,
+  "impact_ratio": 4.999999999999999,
+  "speed_sep": true,
+  "impact_sane": true,
+  "gate_ok": true
+}

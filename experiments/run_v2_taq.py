@@ -94,21 +94,31 @@ GATE_REPORT = PROJECT_ROOT / 'results' / '_v2_taq' / 'eta_scale_report.json'
 
 # v2 TAQ base config. gamma / sigma stay at the EnvConfig defaults (2.5e-7 /
 # 0.00095) — used only by the AC agent's schedule — matching scripts/eta_scale_check
-# so the env replay is byte-identical to the gate run.
+# so the env replay is byte-identical to the gate run. bar_source is per-ticker.
 TAQ_BASE_CONFIG = dict(
     N=20, T=60.0, q0=5000, p0=100.0, eta=1e-5, a=1e-4,
-    bar_source=BAR_SOURCE, bar_minutes=3,
-    action_basis='q0', action_fracs=V2_GRID, use_rv_feature=False,
+    bar_minutes=3, action_basis='q0', action_fracs=V2_GRID, use_rv_feature=False,
 )
+
+
+def _bar_source(ticker: str) -> str:
+    return f'{ticker}_2014_3min_adj.parquet'
+
+
+def _gate_report(ticker: str) -> Path:
+    # AAPL keeps the legacy unprefixed report; others ticker-prefixed (per eta_scale_check).
+    stem = 'eta_scale_report' if ticker == 'AAPL' else f'{ticker}_eta_scale_report'
+    return PROJECT_ROOT / 'results' / '_v2_taq' / f'{stem}.json'
 
 
 # ---------------------------------------------------------------------------
 # Config, folds, gate
 # ---------------------------------------------------------------------------
 
-def build_taq_config() -> TAQConfig:
+def build_taq_config(ticker: str = STOCK) -> TAQConfig:
     return TAQConfig(data_dir=str(PROJECT_ROOT / 'data' / 'processed'),
-                     stock=STOCK, year=YEAR, **TAQ_BASE_CONFIG)
+                     stock=ticker, year=YEAR,
+                     bar_source=_bar_source(ticker), **TAQ_BASE_CONFIG)
 
 
 def get_dates_for_months(all_dates: List[str], months: List[int]) -> List[str]:
@@ -134,20 +144,21 @@ def load_folds(cfg: TAQConfig):
     return all_dates, train, val, test
 
 
-def require_eta_gate() -> dict:
-    """Refuse to train unless the deterministic η-scale gate report says gate_ok."""
-    if not GATE_REPORT.exists():
+def require_eta_gate(ticker: str = STOCK) -> dict:
+    """Refuse to train unless the ticker's deterministic η-scale gate says gate_ok."""
+    gate = _gate_report(ticker)
+    if not gate.exists():
         raise SystemExit(
-            f'η-scale gate report missing: {GATE_REPORT}\n'
-            f'  The v2 TAQ study refuses to train until the deterministic η-scale '
-            f'gate has run.\n'
-            f'  Run first:  python scripts/eta_scale_check.py')
-    data = json.loads(GATE_REPORT.read_text())
+            f'η-scale gate report missing: {gate}\n'
+            f'  The v2 TAQ study refuses to train {ticker} until the deterministic '
+            f'η-scale gate has run.\n'
+            f'  Run first:  python scripts/eta_scale_check.py --ticker {ticker}')
+    data = json.loads(gate.read_text())
     if not bool(data.get('gate_ok', False)):
         raise SystemExit(
-            f'η-scale gate is NOT OK (gate_ok={data.get("gate_ok")!r}) in {GATE_REPORT}.\n'
+            f'η-scale gate is NOT OK (gate_ok={data.get("gate_ok")!r}) in {gate}.\n'
             f'  Re-run with a sane impact scale:  '
-            f'python scripts/eta_scale_check.py --eta <value>')
+            f'python scripts/eta_scale_check.py --ticker {ticker} --eta <value>')
     return data
 
 
@@ -202,7 +213,7 @@ _MANIFEST_MATCH_KEYS = ('taq_config', 'folds', 'seed', 'total_episodes',
 
 def _manifest_payload(taq_config, folds, seed, total, ckpt_freq, n_val, n_test,
                       device, smoke) -> dict:
-    return {'env': 'taq', 'stock': STOCK, 'year': YEAR,
+    return {'env': 'taq', 'stock': taq_config.stock, 'year': YEAR,
             'taq_config': asdict(taq_config), 'folds': folds, 'seed': seed,
             'total_episodes': total, 'checkpoint_freq': ckpt_freq,
             'n_val': n_val, 'n_test': n_test, 'device': device, 'smoke': smoke}
@@ -225,12 +236,13 @@ def write_or_check_manifest(log_dir: Path, payload: dict) -> dict:
 
 
 def _resolve_out(args) -> Path:
-    # Per-seed namespacing: results/_v2_taq/<STOCK>/seed<S>/ (mirrors run_v2_ac /
-    # run_v2_regime). The shared, data-level η-scale gate report lives ABOVE this
-    # (results/_v2_taq/eta_scale_report.json) and is reused across seeds. An
+    # Per-ticker, per-seed namespacing: results/_v2_taq/<TICKER>/seed<S>/ (mirrors
+    # run_v2_ac / run_v2_regime). The data-level η-scale gate report lives ABOVE this
+    # (results/_v2_taq/<ticker>_eta_scale_report.json) and is reused across seeds. An
     # explicit --out-dir still overrides to that exact path (unchanged).
+    ticker = getattr(args, 'ticker', STOCK)
     out = Path(args.out_dir) if args.out_dir else (
-        Path(DEFAULT_OUT_ROOT) / ('_smoke' if args.smoke else '') / STOCK
+        Path(DEFAULT_OUT_ROOT) / ('_smoke' if args.smoke else '') / ticker
         / f'seed{args.seed}')
     if not out.is_absolute():
         out = PROJECT_ROOT / out
@@ -243,8 +255,8 @@ def _resolve_out(args) -> Path:
 
 def cmd_only_agent(args):
     name = args.only_agent
-    require_eta_gate()                       # REFUSE unless η-scale gate is OK
-    taq_config = build_taq_config()
+    require_eta_gate(args.ticker)            # REFUSE unless this ticker's η-gate is OK
+    taq_config = build_taq_config(args.ticker)
     _all, train_dates, _val, _test = load_folds(taq_config)
     tr = SMOKE_TRAIN if args.smoke else DEFAULT_TRAIN
     ckpt_freq = args.checkpoint_freq or tr['checkpoint_freq']
@@ -283,7 +295,7 @@ def cmd_only_agent(args):
     with open(log_path, 'w') as f:
         json.dump(log, f)
     dump_config_json(
-        {'kind': 'v2_taq_staged_train', 'agent': name, 'stock': STOCK,
+        {'kind': 'v2_taq_staged_train', 'agent': name, 'stock': taq_config.stock,
          'taq_config': taq_config, 'folds': FOLD_MONTHS, 'seed': args.seed,
          'episodes': f'{ep_start}:{ep_end}', 'total_episodes': total,
          'checkpoint_freq': ckpt_freq, 'device': args.device, 'smoke': args.smoke},
@@ -338,7 +350,7 @@ def cmd_assemble_eval(args):
                                             n_eval=n_test, seed=test_seed)
 
     # ── Comparison table (with cap-frac column) ────────────────────────────
-    title = (f'v2-TAQ comparison ({STOCK}, seed {seed}, {n_test} test eps)'
+    title = (f'v2-TAQ comparison ({taq_config.stock}, seed {seed}, {n_test} test eps)'
              f'{" [SMOKE]" if manifest.get("smoke") else ""}')
     table = tables_v2.write_comparison_table(
         all_results, log_dir / 'comparison_table.txt', order=canon, title=title)
@@ -351,7 +363,7 @@ def cmd_assemble_eval(args):
         ladder, n_test, test_seed)
     tables_v2.write_alpha_ladder(
         rows, log_dir,
-        caption=f'v2-TAQ CVaR-$\\alpha$ ladder ({STOCK}, seed {seed}).',
+        caption=f'v2-TAQ CVaR-$\\alpha$ ladder ({taq_config.stock}, seed {seed}).',
         label='tab:v2_taq_alpha')
     print('\n' + tables_v2.format_alpha_ladder(rows, title='α-ladder (IQN-neutral)'))
 
@@ -363,7 +375,7 @@ def cmd_assemble_eval(args):
     with open(log_dir / 'is_arrays.pkl', 'wb') as f:
         pickle.dump({k: v for k, v in is_dict.items()}, f)
     dump_config_json(
-        {'kind': 'v2_taq_assemble_eval', 'stock': STOCK, 'seed': seed,
+        {'kind': 'v2_taq_assemble_eval', 'stock': taq_config.stock, 'seed': seed,
          'folds': FOLD_MONTHS, 'n_val': n_val, 'n_test': n_test,
          'val_seed': val_seed, 'test_seed': test_seed, 'alphas': ladder,
          'device': args.device},
@@ -385,6 +397,9 @@ def main():
     mode.add_argument('--assemble-eval', action='store_true',
                       help='CRN-select (val fold), share, test-eval (test fold), tables')
 
+    ap.add_argument('--ticker', default='AAPL',
+                    help='ticker (default AAPL, byte-identical). Needs '
+                         '{ticker}_2014_3min_adj.parquet + a passing η-gate report.')
     ap.add_argument('--seed', type=int, default=42)
     ap.add_argument('--episodes', default=None,
                     help="'a:b' segment or 'N' (default: full/ smoke episodes)")

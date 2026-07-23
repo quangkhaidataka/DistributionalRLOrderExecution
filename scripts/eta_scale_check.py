@@ -39,9 +39,17 @@ import numpy as np
 from envs.taq_env import TAQEnv, TAQConfig
 from agents.baselines import TWAPAgent, MaxSpeedAgent
 
-BAR_SOURCE = 'AAPL_2014_3min_adj.parquet'
 V2_GRID    = [round(0.025 * i, 3) for i in range(11)]
 OUT_DIR    = PROJECT_ROOT / 'results' / '_v2_taq'
+
+
+def _bar_source(ticker: str) -> str:
+    return f'{ticker}_2014_3min_adj.parquet'
+
+
+def _report_stem(ticker: str) -> str:
+    # AAPL keeps the legacy unprefixed name (do not overwrite); others ticker-prefixed.
+    return 'eta_scale_report' if ticker == 'AAPL' else f'{ticker}_eta_scale_report'
 
 # Sanity band for the TWAP mean cost (bps): v1 TAQ TWAP mean ≈ 1.6 bps; a v2
 # 3-min AAPL day should land in the same order of magnitude.
@@ -49,10 +57,10 @@ TWAP_SANE_LO, TWAP_SANE_HI = 0.1, 50.0
 MAXSPEED_MIN_RATIO = 1.10      # MaxSpeed must cost ≥1.1× TWAP (else impact too cheap)
 
 
-def build_cfg(eta: float) -> TAQConfig:
+def build_cfg(eta: float, ticker: str = 'AAPL', q0: int = 5000) -> TAQConfig:
     return TAQConfig(
-        N=20, T=60.0, q0=5000, p0=100.0, eta=eta, a=1e-4,
-        bar_source=BAR_SOURCE, bar_minutes=3,
+        N=20, T=60.0, q0=q0, p0=100.0, eta=eta, a=1e-4,
+        bar_source=_bar_source(ticker), bar_minutes=3,
         action_basis='q0', action_fracs=V2_GRID,
         data_dir=str(PROJECT_ROOT / 'data' / 'processed'),
     )
@@ -99,19 +107,21 @@ def day_costs(cfg: TAQConfig, date: str):
 
 def main():
     ap = argparse.ArgumentParser(description='TAQ η-scale gate (deterministic, no training)')
+    ap.add_argument('--ticker', default='AAPL', help='ticker (default AAPL; unprefixed report)')
     ap.add_argument('--eta', type=float, default=1e-5)
+    ap.add_argument('--q0', type=int, default=5000)
     ap.add_argument('--n-days', type=int, default=15)
     args = ap.parse_args()
 
     import pandas as pd
-    df = pd.read_parquet(PROJECT_ROOT / 'data' / 'processed' / BAR_SOURCE)
+    df = pd.read_parquet(PROJECT_ROOT / 'data' / 'processed' / _bar_source(args.ticker))
     df['month'] = pd.to_datetime(df['date']).dt.month
     test_days = sorted(df[df['month'].isin([10, 11, 12])]['date'].unique().tolist())
     if len(test_days) < 10:
         raise SystemExit(f'Only {len(test_days)} Oct–Dec test days found (<10).')
     sample = test_days[:args.n_days]
 
-    cfg = build_cfg(args.eta)
+    cfg = build_cfg(args.eta, args.ticker, args.q0)
     rows = []
     for d in sample:
         tw, ms, twi, msi, n = day_costs(cfg, d)
@@ -132,7 +142,7 @@ def main():
     gate_ok   = bool(speed_sep and imp_sane)
 
     L = ['=' * 78,
-         '  TAQ η-scale gate — TWAP vs MaxSpeed (3-min, N=20), deterministic',
+         f'  TAQ η-scale gate — {args.ticker} — TWAP vs MaxSpeed (3-min, N=20), deterministic',
          '=' * 78,
          f'  η = {args.eta:g}   q0 = {cfg.q0}   a = {cfg.a:g}   '
          f'sample = {len(sample)} test days (Oct–Dec)',
@@ -164,15 +174,16 @@ def main():
     print(txt)
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    (OUT_DIR / 'eta_scale_report.txt').write_text(txt)
-    with open(OUT_DIR / 'eta_scale_report.json', 'w') as f:
-        json.dump({'eta': args.eta, 'q0': cfg.q0, 'a': cfg.a, 'n_days': len(sample),
-                   'per_day': rows, 'twap_mean_bps': twap_mean,
+    stem = _report_stem(args.ticker)
+    (OUT_DIR / f'{stem}.txt').write_text(txt)
+    with open(OUT_DIR / f'{stem}.json', 'w') as f:
+        json.dump({'ticker': args.ticker, 'eta': args.eta, 'q0': cfg.q0, 'a': cfg.a,
+                   'n_days': len(sample), 'per_day': rows, 'twap_mean_bps': twap_mean,
                    'maxspeed_mean_bps': mspd_mean, 'twap_impact_bps': twap_imp,
                    'maxspeed_impact_bps': mspd_imp, 'impact_ratio': imp_ratio,
                    'speed_sep': speed_sep, 'impact_sane': imp_sane,
                    'gate_ok': gate_ok}, f, indent=2)
-    print(f'\n  wrote {OUT_DIR/"eta_scale_report.json"} (gate_ok={gate_ok})')
+    print(f'\n  wrote {OUT_DIR/(stem+".json")} (gate_ok={gate_ok})')
     sys.exit(0)
 
 
