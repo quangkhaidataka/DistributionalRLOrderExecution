@@ -1,0 +1,18 @@
+\begin{table}[H]\centering
+\caption{GOOG negative-mean-IS diagnostic: IS decomposition (bps, 5-seed mean), GOOG vs AAPL.}
+\label{tab:goog_diag}
+\begin{tabular}{@{}llrrrr@{}}
+\toprule
+Ticker & Agent & IS mean & timing & temp-impact & penalty \\
+\midrule
+GOOG & DQN & -39.9 & -40.2 & +0.17 & +0.18 \\
+GOOG & DDQN & -31.9 & -32.3 & +0.20 & +0.22 \\
+GOOG & IQN-neutral & -35.6 & -36.0 & +0.21 & +0.22 \\
+AAPL & DQN & +1.2 & +0.15 & +0.82 & +0.18 \\
+AAPL & DDQN & +1.3 & +0.05 & +1.06 & +0.23 \\
+AAPL & IQN-neutral & +1.4 & +0.04 & +1.10 & +0.24 \\
+\midrule
+\multicolumn{6}{@{}l}{\footnotesize GOOG IQN detrended $-36.7$ / day-reversed $-34.8$ (timing survives $\Rightarrow$ intraday-vol, not linear drift).}\\
+\bottomrule
+\end{tabular}
+\end{table}

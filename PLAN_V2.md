@@ -229,6 +229,18 @@ DQN ~14′, DDQN ~15′, IQN ~50′ (split to stay < 30′/job).
 ---
 
 ## Decision log
+- 2026-07-24: **GOOG negative-mean-IS diagnostic → VERDICT (A) TIMING CONFOUND; GOOG DEMOTED.**
+  GOOG learned agents book mean IS ≈ −35 bps (vs TWAP/MaxSpeed ≈0, AAPL ≈+1). Eval-only
+  diagnostic (`results/_v2_taq/_diagnostics/GOOG/goog_diagnostic.{txt,tex}`): IS decomposes
+  ~100% into the TIMING term (impact/penalty tiny-positive, identical to AAPL) → not cheaper
+  execution but price-timing P&L; agents HOLD inventory (vs AAPL front-load); GOOG test-fold
+  drift std 119.5 bps/ep (AAPL 40); the negative mean does NOT collapse under detrend (−36.7)
+  or day-reversal (−34.8) → intraday-volatility/mean-reversion signal via Δp\*, not removable
+  linear drift; IS math exact (recon Δ 9e-13), no look-ahead, single code path, no residual
+  split → no bug. **Consequence:** GOOG demoted from a headline cheaper-execution win to a
+  Limitations caveat (tail win over MaxSpeed = timing exposure on a volatile name). AAPL/MSFT
+  execution comparisons stand. Robust paper claim = "IQN > scalar DQN on the tail across names
+  (14/15, p=0.0005)"; the GOOG MaxSpeed-beat is caveated as a timing confound.
 - 2026-07-24: **TAQ cross-section extended to GOOG + MSFT (5 seeds each).** Generalised
   data build (`--ticker`, data-driven split scan: GOOG 2:1 @2014-04-03 measured 2.000, MSFT
   none; AAPL keeps known 7:1, byte-identical), η-gate (`--ticker` → `{T}_eta_scale_report.*`;

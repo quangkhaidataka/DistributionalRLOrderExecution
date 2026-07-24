@@ -1,0 +1,79 @@
+####################################################################################
+  GOOG NEGATIVE-MEAN-IS DIAGNOSTIC — GOOG vs AAPL (eval-only, selected ckpts)
+####################################################################################
+
+=== CHECK 5 — test-fold (Oct–Dec) price-path drift: does GOOG trend? ===
+  ticker  cum ret %  drift bps/ep(60min)  drift std   maxDD %
+  GOOG        -8.44                -2.57     119.53    -15.21
+  AAPL        11.29                -0.03      39.99    -10.29
+  MSFT         1.20                +1.53      35.48     -8.95
+  -> GOOG mean 60-min window drift = -2.57 bps/ep (AAPL -0.03, MSFT +1.53); a hold-biased SELL captures +drift as NEGATIVE IS.
+
+=== CHECK 1 — IS decomposition (mean bps): timing + temp-impact + penalty (perm-impact=0, not modeled) ===
+  tk/agent           IS mean  = timing  + impact + penalty  | recon Δ    CVaR95
+  GOOG/DQN            -39.87    -40.22     +0.17     +0.18    9.7e-13    +38.36
+  GOOG/DDQN           -31.85    -32.27     +0.20     +0.22    9.4e-13    +28.13
+  GOOG/IQN-neutral    -35.56    -35.99     +0.21     +0.22    9.3e-13    +27.13
+  AAPL/DQN             +1.15     +0.15     +0.82     +0.18    6.7e-13    +35.01
+  AAPL/DDQN            +1.34     +0.05     +1.06     +0.23    5.1e-13    +26.07
+  AAPL/IQN-neutral     +1.38     +0.04     +1.10     +0.24    3.9e-13    +26.09
+  (recon Δ = max|Σcomponents − env-logged IS| over all episodes; ~0 ⇒ CHECK-4a IS math exact)
+
+=== CHECK 2 — IQN-neutral trade schedule (traded frac/step) & remaining inventory/step ===
+  [s42] step:         1    2    3    4    5    6    7    8    9   10   11   12   13   14   15   16   17   18   19   20
+    GOOG traded/q0: 0.25 0.19 0.17 0.12 0.09 0.09 0.08 0.07 0.07 0.06 0.06 0.06 0.05 0.05 0.03 0.06 0.07 0.09 0.04 0.04
+    GOOG remain/q0: 1.00 0.75 0.56 0.38 0.32 0.28 0.24 0.21 0.19 0.17 0.16 0.16 0.14 0.13 0.12 0.13 0.12 0.11 0.07 0.04
+    AAPL traded/q0: 0.25 0.25 0.25 0.25 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.10
+    AAPL remain/q0: 1.00 0.75 0.50 0.25 0.10 0.10 0.10 0.10 0.10 0.10 0.10 0.10 0.10 0.10 0.10 0.10 0.10 0.10 0.10 0.10
+
+  [mean] step:         1    2    3    4    5    6    7    8    9   10   11   12   13   14   15   16   17   18   19   20
+    GOOG traded/q0: 0.24 0.18 0.17 0.12 0.10 0.08 0.08 0.07 0.07 0.07 0.06 0.06 0.05 0.04 0.04 0.05 0.03 0.05 0.02 0.09
+    GOOG remain/q0: 1.00 0.76 0.57 0.40 0.32 0.27 0.24 0.22 0.20 0.18 0.16 0.15 0.14 0.13 0.14 0.13 0.12 0.11 0.09 0.09
+    AAPL traded/q0: 0.25 0.24 0.24 0.24 0.08 0.06 0.03 0.05 0.04 0.03 0.03 0.02 0.01 0.00 0.02 0.00 0.00 0.00 0.00 0.05
+    AAPL remain/q0: 1.00 0.75 0.52 0.28 0.20 0.14 0.11 0.13 0.10 0.09 0.08 0.09 0.07 0.06 0.06 0.05 0.05 0.05 0.05 0.05
+
+=== CHECK 3 — GOOG IQN-neutral re-eval on modified price paths (same ckpts, no retrain) ===
+  condition      mean IS    CVaR95   (drift removed ⇒ negative mean should collapse to +cost)
+  as-is           -35.56    +27.13
+  detrended       -36.66    +32.35
+  day-reversed    -34.83    +24.34
+
+=== CHECK 4 — bug / leakage sanity ===
+  (4a) IS math exact: max|Σ(timing+impact+penalty) − env-logged IS| over all episodes ≈ 9e-13 bps
+       (see CHECK-1 "recon Δ" column) → the logged IS is exactly the 3-component decomposition; no computation error.
+  (4b) look-ahead: perturbing bar k=8 mid by +$500 leaves states at steps 0..7 IDENTICAL (Δ=0.00e0)
+       and changes step 8 (Δ=9.2e-1) → state_t depends only on bars ≤ t; NO future-bar leakage.
+  (4b) code path: a single TAQEnv class serves all tickers; step()/_get_state() have NO per-ticker branch
+       (GOOG uses the identical feature code as AAPL/MSFT; only cfg.stock/bar_source differ).
+  (4b) split continuity: GOOG 2:1 split (2014-04-03) is in the TRAIN fold; the Oct–Dec TEST fold has
+       0 adjacent-day gaps >5% (max 4.09%, a normal overnight move) → no residual split step in test.
+  ⇒ CHECK 4: NO bug, NO leakage, NO residual split.
+
+====================================================================================
+  VERDICT — (A) TIMING / SIGNAL-CAPTURE CONFOUND (refined: not removable linear drift)
+====================================================================================
+  Evidence:
+   • CHECK 1: the GOOG negative mean is ~100% the TIMING term (IQN −35.6 = timing −36.0 + impact +0.21
+     + penalty +0.22). Impact & penalty are tiny-positive and IDENTICAL to the AAPL reference
+     (AAPL impact +1.1) — the learned agents are NOT executing more cheaply; they book price-timing P&L.
+   • CHECK 2: on GOOG the learned agents HOLD inventory far longer (remain ≈0.2–0.4 mid-episode, 0.09 at
+     step 19) vs AAPL front-loading to a flat 0.10 by step 4 — the holding is what enables the timing.
+   • CHECK 5: GOOG Oct–Dec has a small MEAN linear window-drift (−2.57 bps) but ENORMOUS dispersion
+     (std 119.5 bps/ep vs AAPL 40, MSFT 35) — the raw material for intraday timing.
+   • CHECK 3: the negative mean does NOT collapse under per-episode DETRENDING (−36.7) or DAY-REVERSAL
+     (−34.8). ⇒ the exploited structure is intraday VOLATILITY / mean-reversion (the agent sells into
+     observed up-moves via Δp*), NOT a removable linear drift. This makes the confound MORE pervasive,
+     not less: it cannot be detrended away.
+   • CHECK 4: no bug, no look-ahead, no residual split — the effect is a real property of the policy+data,
+     not a computation error.
+  Interpretation: the learned agents behave volatility-ADAPTIVELY — on low-vol AAPL/MSFT they front-load
+  (≈MaxSpeed, timing ≈0, IS ≈ +impact) but on high-vol GOOG they hold and time, conditioning on the observed
+  price (Δp*) to sell into transient strength. That yields a large negative IS that is DIRECTIONAL/timing
+  P&L, not cheaper liquidation. TWAP/MaxSpeed cannot time, so GOOG's tail "win" (CVaR95 27 vs MaxSpeed 130)
+  reflects timing EXPOSURE to GOOG's volatile path, not superior execution.
+  RECOMMENDATION: DEMOTE GOOG from a headline execution win to a Limitations/caveat —
+  "on a highly volatile name the learned policies exploit intraday price structure through the price
+   feature, generating timing P&L that confounds the pure execution-cost comparison; the confound is not
+   removed by detrending, so GOOG is unsuitable as a clean cheaper-execution result." The AAPL/MSFT
+  comparisons (impact-dominated, timing ≈0) remain valid execution results.
+====================================================================================
