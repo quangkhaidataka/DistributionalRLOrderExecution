@@ -229,6 +229,19 @@ DQN ~14′, DDQN ~15′, IQN ~50′ (split to stay < 30′/job).
 ---
 
 ## Decision log
+- 2026-07-24: **TAQ cross-section extended to GOOG + MSFT (5 seeds each).** Generalised
+  data build (`--ticker`, data-driven split scan: GOOG 2:1 @2014-04-03 measured 2.000, MSFT
+  none; AAPL keeps known 7:1, byte-identical), η-gate (`--ticker` → `{T}_eta_scale_report.*`;
+  default q0=5000/η=1e-5 transfers — GOOG MaxSpeed impact 0.226 bps / MSFT 2.79, both 5× & in
+  band, no recalibration), run_v2_taq.py (`--ticker`, per-ticker dir/gate; AAPL untouched).
+  T-TAQ-0 clean for both (32,655 / 32,652 bars, 252 days, 0 NaN). **Cross-sectional verdict
+  (5-seed mean):** (1) IQN robustly beats DQN — pooled 14/15 cells CVaR₉₅ (p=0.0005). (2) IQN
+  vs DDQN a wash — pooled 9/15 (p=0.30). (3) vs MaxSpeed name-dependent — ties on AAPL/MSFT but
+  CRUSHES the dump on GOOG (27.4 vs 130.1, −79%: high price + high intraday vol ⇒ fast dumping
+  catastrophic, learned policy essential). (4) α-ladder inert on both (5th/6th env). Reprod:
+  IQN most stable on GOOG, not MSFT/AAPL. Tables `_aggregate/{GOOG,MSFT}_seed_summary.*` +
+  `cross_ticker_summary.*`. Data parquets gitignored (regenerable). Paper narrative: DQN-beat
+  generalises; MaxSpeed-beat is GOOG-specific (a real strong-case name); dial universally inert.
 - 2026-07-23: **Regime jump-robustness sweep DONE.** Additive `--jump-std/--jump-intensity`
   on run_v2_regime.py (defaults byte-identical; overrides route to `_robustness/sJ_lJ/seed/`).
   3 points × 3 seeds {42,123,7}, locked cell except the swept jump param: A(σ_J=0.08,λ=0.10),
