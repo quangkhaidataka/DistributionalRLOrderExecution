@@ -21,3 +21,13 @@ __pycache__/
 
 # OS / editor
 .DS_Store
+
+# --- order_robust_check/ (self-contained order-size robustness appendix) ---
+# This folder IS published: its results (tables + per-cell metrics) and its
+# checkpoints are part of the deliverable, so they override the blanket
+# `results/` and `*.pt` rules above.
+!order_robust_check/results/
+!order_robust_check/checkpoints/**/*.pt
+# ...but never its copy of the AAPL TAQ bars: NYSE TAQ via WRDS is licensed
+# data. Regenerate with the loaders (see order_robust_check/run_order_robust.py).
+order_robust_check/data/

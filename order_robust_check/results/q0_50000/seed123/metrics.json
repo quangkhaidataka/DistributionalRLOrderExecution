@@ -1,0 +1,62 @@
+{
+  "q0": 50000,
+  "seed": 123,
+  "eta": 1e-05,
+  "episodes": 12000,
+  "n_val": 1200,
+  "n_test": 10000,
+  "val_seed": 54444,
+  "test_seed": 100122,
+  "selected": {
+    "DQN": {
+      "checkpoint": "DQN_ep9000.pt",
+      "episode": 9000,
+      "n_ckpts": 12
+    },
+    "DDQN": {
+      "checkpoint": "DDQN_ep6000.pt",
+      "episode": 6000,
+      "n_ckpts": 12
+    },
+    "IQN-neutral": {
+      "checkpoint": "IQN-neutral_ep10000.pt",
+      "episode": 10000,
+      "n_ckpts": 12
+    }
+  },
+  "train_minutes": 16.346753068765004,
+  "metrics": {
+    "TWAP": {
+      "mean_IS_bps": 2.0696038333631748,
+      "std_IS_bps": 24.382707088983373,
+      "CVaR_0.90_bps": 45.430171536708855,
+      "CVaR_0.95_bps": 58.73383347450229,
+      "max_IS_bps": 241.03966762862976,
+      "cap_frac": 0.0
+    },
+    "DQN": {
+      "mean_IS_bps": 11.186504722131577,
+      "std_IS_bps": 11.868947815013682,
+      "CVaR_0.90_bps": 31.801206434636722,
+      "CVaR_0.95_bps": 38.3645690416565,
+      "max_IS_bps": 208.3607184358971,
+      "cap_frac": 0.45143473312166776
+    },
+    "DDQN": {
+      "mean_IS_bps": 10.202429209633873,
+      "std_IS_bps": 11.06005534950902,
+      "CVaR_0.90_bps": 29.704938172611826,
+      "CVaR_0.95_bps": 36.28380810930661,
+      "max_IS_bps": 181.7105546248783,
+      "cap_frac": 0.22818013911266555
+    },
+    "IQN-neutral": {
+      "mean_IS_bps": 6.20562909618163,
+      "std_IS_bps": 15.364296501918806,
+      "CVaR_0.90_bps": 31.545394338560506,
+      "CVaR_0.95_bps": 41.215945984507734,
+      "max_IS_bps": 274.9975281330184,
+      "cap_frac": 0.0
+    }
+  }
+}
